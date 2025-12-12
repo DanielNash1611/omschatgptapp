@@ -1,0 +1,55 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "OMS Tools Bridge",
+    "version": "1.0.0",
+    "description": "Get the status of an order from the OMS via our internal MCP-like server."
+  },
+  "paths": {
+    "/api/tools/get_order_status": {
+      "post": {
+        "summary": "Get order status",
+        "description": "Fetch order status from the OMS through the internal MCP-like JSON-RPC server.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "orderId": {
+                    "type": "string",
+                    "description": "OMS order ID to look up"
+                  }
+                },
+                "required": ["orderId"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Order status response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "orderId": { "type": "string" },
+                    "status": { "type": "string" },
+                    "eta": { "type": ["string", "null"] },
+                    "carrier": { "type": ["string", "null"] },
+                    "trackingNumber": { "type": ["string", "null"] },
+                    "canCancel": { "type": "boolean" },
+                    "customerName": { "type": "string" }
+                  },
+                  "required": ["orderId", "status", "canCancel", "customerName"]
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

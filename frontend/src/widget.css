@@ -1,0 +1,53 @@
+:root {
+  font-family: "Space Grotesk", "Segoe UI", system-ui, -apple-system, sans-serif;
+  color: #0f172a;
+}
+
+body {
+  margin: 0;
+  background: #0b1221;
+  color: #e2e8f0;
+}
+
+.widget {
+  padding: 16px;
+  min-height: 100vh;
+  background: radial-gradient(circle at 10% 10%, #132344, transparent 35%),
+    radial-gradient(circle at 80% 0%, #132344, transparent 30%),
+    linear-gradient(140deg, #0b1221, #0f172a 70%);
+}
+
+header {
+  margin-bottom: 16px;
+}
+
+.eyebrow {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.78rem;
+  color: #7cc0ff;
+  margin: 0 0 4px 0;
+}
+
+h1 {
+  margin: 0 0 6px 0;
+}
+
+.lede {
+  margin: 0;
+  color: #cbd5e1;
+}
+
+.card {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+}
+
+.status {
+  font-weight: 700;
+  color: #93c5fd;
+}
