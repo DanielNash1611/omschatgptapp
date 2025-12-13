@@ -1,6 +1,6 @@
 // mcp-server/src/oms.ts
 
-import { CancelOrderResult, Order } from "../../shared/types";
+import { CancelOrderResult, Order } from "./types";
 
 const mockOrders: Order[] = [
   {
@@ -10,7 +10,7 @@ const mockOrders: Order[] = [
     carrier: "UPS",
     trackingNumber: "1Z999AA10123456784",
     eta: "2025-01-15",
-    canCancel: false
+    canCancel: false,
   },
   {
     orderId: "1002",
@@ -19,7 +19,7 @@ const mockOrders: Order[] = [
     carrier: null,
     trackingNumber: null,
     eta: "2025-01-10",
-    canCancel: true
+    canCancel: true,
   },
   {
     orderId: "1003",
@@ -28,8 +28,8 @@ const mockOrders: Order[] = [
     carrier: "FedEx",
     trackingNumber: "999999999999",
     eta: "2025-01-05",
-    canCancel: false
-  }
+    canCancel: false,
+  },
 ];
 
 const maybeDelay = async () => new Promise(resolve => setTimeout(resolve, 120));
@@ -40,7 +40,7 @@ export async function getOrderStatus(orderId: string): Promise<Order | null> {
   return order ?? null;
 }
 
-// Optional cancel; we won’t use it yet but it’s fine to keep
+// Mock cancel implementation kept for parity with downstream tooling expectations.
 export async function cancelOrder(
   orderId: string
 ): Promise<CancelOrderResult & { orderId?: string; cancelledAt?: string }> {
@@ -54,7 +54,7 @@ export async function cancelOrder(
       success: false,
       reason: "NOT_CANCELLABLE",
       status: order.status,
-      orderId
+      orderId,
     };
   }
   order.status = "Cancelled";
@@ -63,7 +63,7 @@ export async function cancelOrder(
     success: true,
     status: order.status,
     orderId,
-    cancelledAt: new Date().toISOString()
+    cancelledAt: new Date().toISOString(),
   };
 }
 

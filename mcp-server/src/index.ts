@@ -1,12 +1,13 @@
 /**
  * Minimal MCP-like JSON-RPC server (no @modelcontextprotocol/sdk available here).
  * Exposes OMS tools over POST /mcp with a simple JSON-RPC 2.0 contract.
- * Intended as scaffolding until the real MCP SDK can be used.
+ *
+ * Legacy fallback: prefer src/server.ts which uses the official MCP SDK.
  */
 
 import http from "http";
 import { z } from "zod";
-import { getOrderStatus } from "./oms";
+import { cancelOrder, getOrderStatus } from "./oms";
 
 type JsonRpcRequest = {
   jsonrpc?: string;
@@ -107,7 +108,7 @@ const tools = {
       content: {
         orderId: parsed.data.orderId,
         ...result,
-        cancelledAt: result.success ? new Date().toISOString() : undefined
+        cancelledAt: result.cancelledAt ?? (result.success ? new Date().toISOString() : undefined)
       }
     };
   }
