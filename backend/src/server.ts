@@ -17,7 +17,7 @@ import { Order } from "./types";
 dotenv.config();
 
 const app = express();
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT ? Number(process.env.PORT) : 3001;
 
 app.use(
   cors({
@@ -190,6 +190,6 @@ app.post("/api/chat", async (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`OMS assistant backend listening on http://localhost:${PORT}`);
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`OMS assistant backend listening on http://0.0.0.0:${PORT}`);
 });
