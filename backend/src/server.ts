@@ -30,6 +30,10 @@ app.get("/health", (_req, res) => {
   res.json({ status: "ok" });
 });
 
+app.get("/healthz", (_req, res) => {
+  res.status(200).json({ ok: true });
+});
+
 app.post("/api/tools/get_order_status", async (req, res) => {
   const orderId = typeof req.body?.orderId === "string" ? req.body.orderId.trim() : "";
 

@@ -39,7 +39,7 @@ function deriveDisplayData(toolOutput: unknown) {
 }
 
 function Widget() {
-  const [latest, setLatest] = useState<unknown>(() => window.openai?.toolOutput);
+  const [latest, _setLatest] = useState<unknown>(() => window.openai?.toolOutput);
 
   useEffect(() => {
     // Persist the last seen output so the widget can rehydrate if reopened.

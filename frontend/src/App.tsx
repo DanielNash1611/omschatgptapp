@@ -159,9 +159,9 @@ function App() {
               Action: <strong>{debugInfo.action ?? "n/a"}</strong>
               {debugInfo.orderId ? ` · Order: ${debugInfo.orderId}` : ""}
             </p>
-            {debugInfo.toolResult && (
+            {debugInfo.toolResult != null ? (
               <pre>{JSON.stringify(debugInfo.toolResult, null, 2)}</pre>
-            )}
+            ) : null}
           </div>
         )}
       </main>
