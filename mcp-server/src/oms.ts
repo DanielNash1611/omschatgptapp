@@ -1,6 +1,6 @@
 // mcp-server/src/oms.ts
 
-import { CancelOrderResult, Order } from "./types";
+import type { CancelOrderResult, Order } from "./types.ts";
 
 const mockOrders: Order[] = [
   {

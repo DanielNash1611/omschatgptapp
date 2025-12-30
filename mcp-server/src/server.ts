@@ -3,11 +3,12 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
-import { cancelOrder, getOrderStatus } from "./oms";
-import type { CancelOrderResult, Order } from "./types";
+import { cancelOrder, getOrderStatus } from "./oms.ts";
+import type { CancelOrderResult, Order } from "./types.ts";
 
 const PATH = "/mcp";
 const PORT = Number(process.env.PORT ?? "8787");
+const HOST = "0.0.0.0";
 
 const orderIdParam = {
   orderId: z
@@ -130,6 +131,6 @@ const httpServer = http.createServer(async (req, res) => {
   }
 });
 
-httpServer.listen(PORT, () => {
-  console.log(`OMS MCP server listening on http://localhost:${PORT}${PATH}`);
+httpServer.listen(PORT, HOST, () => {
+  console.log(`OMS MCP server listening on http://${HOST}:${PORT}${PATH}`);
 });
