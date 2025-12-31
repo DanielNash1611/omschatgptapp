@@ -3,8 +3,8 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
-import { cancelOrder, getOrderStatus } from "./oms.ts";
-import type { CancelOrderResult, Order } from "./types.ts";
+import { cancelOrder, getOrderStatus } from "./oms.js";
+import type { CancelOrderResult, Order } from "./types.js";
 
 const PATH = "/mcp";
 const PORT = Number(process.env.PORT ?? "8787");
@@ -105,6 +105,13 @@ const toStructured = (value: object): Record<string, unknown> =>
   ({ ...(value as Record<string, unknown>) });
 
 const httpServer = http.createServer(async (req, res) => {
+  if (req.url === "/healthz") {
+    res.statusCode = 200;
+    res.setHeader("Content-Type", "application/json");
+    res.end(JSON.stringify({ ok: true }));
+    return;
+  }
+
   if (!req.url?.startsWith(PATH)) {
     res.statusCode = 404;
     res.end("Not found");

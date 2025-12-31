@@ -7,7 +7,7 @@
 
 import http from "http";
 import { z } from "zod";
-import { cancelOrder, getOrderStatus } from "./oms";
+import { cancelOrder, getOrderStatus } from "./oms.js";
 
 type JsonRpcRequest = {
   jsonrpc?: string;
@@ -32,8 +32,9 @@ type JsonRpcError = {
   };
 };
 
-const PORT = Number(process.env.PORT) || 3002;
+const PORT = process.env.PORT ? Number(process.env.PORT) : 3002;
 const PATH = "/mcp";
+const HOST = "0.0.0.0";
 
 const getOrderStatusSchema = z.object({
   orderId: z.string().min(1)
@@ -159,6 +160,6 @@ const server = http.createServer(async (req, res) => {
   });
 });
 
-server.listen(PORT, () => {
-  console.log(`OMS MCP-like JSON-RPC server listening on http://localhost:${PORT}${PATH}`);
+server.listen(PORT, HOST, () => {
+  console.log(`OMS MCP-like JSON-RPC server listening on http://${HOST}:${PORT}${PATH}`);
 });
