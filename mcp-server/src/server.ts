@@ -104,6 +104,20 @@ const describeCancelFailure = (
 const toStructured = (value: object): Record<string, unknown> =>
   ({ ...(value as Record<string, unknown>) });
 
+const normalizeAcceptHeader = (req: http.IncomingMessage): void => {
+  const accept = req.headers.accept ?? "";
+  const hasJson = accept.includes("application/json");
+  const hasSse = accept.includes("text/event-stream");
+
+  if (!accept) {
+    req.headers.accept = "application/json, text/event-stream";
+  } else if (hasJson && !hasSse) {
+    req.headers.accept = `${accept}, text/event-stream`;
+  } else if (hasSse && !hasJson) {
+    req.headers.accept = `${accept}, application/json`;
+  }
+};
+
 const httpServer = http.createServer(async (req, res) => {
   if (req.url === "/healthz") {
     res.statusCode = 200;
@@ -117,6 +131,8 @@ const httpServer = http.createServer(async (req, res) => {
     res.end("Not found");
     return;
   }
+
+  normalizeAcceptHeader(req);
 
   const transport = new StreamableHTTPServerTransport({
     sessionIdGenerator: undefined,
