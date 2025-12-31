@@ -1,4 +1,5 @@
 import http from "node:http";
+import { randomUUID } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
@@ -118,6 +119,11 @@ const normalizeAcceptHeader = (req: http.IncomingMessage): void => {
   }
 };
 
+const server = createServer();
+const transport = new StreamableHTTPServerTransport({
+  sessionIdGenerator: randomUUID,
+});
+
 const httpServer = http.createServer(async (req, res) => {
   if (req.url === "/healthz") {
     res.statusCode = 200;
@@ -134,13 +140,7 @@ const httpServer = http.createServer(async (req, res) => {
 
   normalizeAcceptHeader(req);
 
-  const transport = new StreamableHTTPServerTransport({
-    sessionIdGenerator: undefined,
-  });
-  const server = createServer();
-
   try {
-    await server.connect(transport);
     await transport.handleRequest(req, res);
   } catch (error) {
     console.error("MCP server connection error:", error);
@@ -148,12 +148,17 @@ const httpServer = http.createServer(async (req, res) => {
       res.statusCode = 500;
       res.end("Internal server error");
     }
-  } finally {
-    await transport.close();
-    await server.close();
   }
 });
 
-httpServer.listen(PORT, HOST, () => {
-  console.log(`OMS MCP server listening on http://${HOST}:${PORT}${PATH}`);
+const main = async () => {
+  await server.connect(transport);
+  httpServer.listen(PORT, HOST, () => {
+    console.log(`OMS MCP server listening on http://${HOST}:${PORT}${PATH}`);
+  });
+};
+
+main().catch(error => {
+  console.error("Failed to start MCP server:", error);
+  process.exit(1);
 });
