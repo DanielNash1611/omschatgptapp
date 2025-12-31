@@ -1,15 +1,19 @@
-import http from "node:http";
 import { randomUUID } from "node:crypto";
+import express from "express";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
+import type { Request, Response, NextFunction } from "express";
 import { cancelOrder, getOrderStatus } from "./oms.js";
 import type { CancelOrderResult, Order } from "./types.js";
 
 const PATH = "/mcp";
 const PORT = Number(process.env.PORT ?? "8787");
 const HOST = "0.0.0.0";
+const app = express();
+app.use(express.json({ limit: "1mb" }));
 
 const orderIdParam = {
   orderId: z
@@ -105,7 +109,7 @@ const describeCancelFailure = (
 const toStructured = (value: object): Record<string, unknown> =>
   ({ ...(value as Record<string, unknown>) });
 
-const normalizeAcceptHeader = (req: http.IncomingMessage): void => {
+const normalizeAcceptHeader = (req: { headers: Request["headers"] }): void => {
   const accept = req.headers.accept ?? "";
   const hasJson = accept.includes("application/json");
   const hasSse = accept.includes("text/event-stream");
@@ -119,46 +123,88 @@ const normalizeAcceptHeader = (req: http.IncomingMessage): void => {
   }
 };
 
-const server = createServer();
-const transport = new StreamableHTTPServerTransport({
-  sessionIdGenerator: randomUUID,
+type Session = {
+  transport: StreamableHTTPServerTransport;
+  server: McpServer;
+};
+
+const sessions: Record<string, Session> = {};
+
+const getSessionId = (req: Request): string | undefined => {
+  const header = req.headers["mcp-session-id"];
+  if (Array.isArray(header)) return header[0];
+  if (typeof header === "string") return header;
+  return undefined;
+};
+
+const acceptNormalizer = (req: Request, _res: Response, next: NextFunction) => {
+  normalizeAcceptHeader(req);
+  next();
+};
+
+app.use(PATH, acceptNormalizer);
+
+app.get("/healthz", (_req: Request, res: Response) => {
+  res.status(200).json({ ok: true });
 });
 
-const httpServer = http.createServer(async (req, res) => {
-  if (req.url === "/healthz") {
-    res.statusCode = 200;
-    res.setHeader("Content-Type", "application/json");
-    res.end(JSON.stringify({ ok: true }));
-    return;
-  }
-
-  if (!req.url?.startsWith(PATH)) {
-    res.statusCode = 404;
-    res.end("Not found");
-    return;
-  }
-
-  normalizeAcceptHeader(req);
-
+app.post(PATH, async (req: Request, res: Response) => {
   try {
-    await transport.handleRequest(req, res);
+    if (isInitializeRequest(req.body)) {
+      const server = createServer();
+      let sessionIdForTransport: string | undefined;
+      const transport = new StreamableHTTPServerTransport({
+        sessionIdGenerator: () => randomUUID(),
+        onsessioninitialized: sessionId => {
+          sessionIdForTransport = sessionId;
+          sessions[sessionId] = { transport, server };
+        },
+      });
+
+      transport.onclose = () => {
+        if (sessionIdForTransport) {
+          delete sessions[sessionIdForTransport];
+        }
+      };
+
+      await server.connect(transport);
+      await transport.handleRequest(req, res);
+      return;
+    }
+
+    const sessionId = getSessionId(req);
+    if (!sessionId || !sessions[sessionId]) {
+      res.status(400).json({ error: "No valid session ID provided" });
+      return;
+    }
+
+    const session = sessions[sessionId];
+    await session.transport.handleRequest(req, res);
   } catch (error) {
     console.error("MCP server connection error:", error);
     if (!res.headersSent) {
-      res.statusCode = 500;
-      res.end("Internal server error");
+      res.status(500).end("Internal server error");
     }
   }
 });
 
-const main = async () => {
-  await server.connect(transport);
-  httpServer.listen(PORT, HOST, () => {
-    console.log(`OMS MCP server listening on http://${HOST}:${PORT}${PATH}`);
-  });
-};
+app.get(PATH, async (req: Request, res: Response) => {
+  try {
+    const sessionId = getSessionId(req);
+    if (!sessionId || !sessions[sessionId]) {
+      res.status(400).json({ error: "No valid session ID provided" });
+      return;
+    }
+    const session = sessions[sessionId];
+    await session.transport.handleRequest(req, res);
+  } catch (error) {
+    console.error("MCP server connection error:", error);
+    if (!res.headersSent) {
+      res.status(500).end("Internal server error");
+    }
+  }
+});
 
-main().catch(error => {
-  console.error("Failed to start MCP server:", error);
-  process.exit(1);
+app.listen(PORT, HOST, () => {
+  console.log(`OMS MCP server listening on http://${HOST}:${PORT}${PATH}`);
 });
