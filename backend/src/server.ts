@@ -6,6 +6,7 @@
 // 5. Backend listens on http://localhost:3001
 
 import cors from "cors";
+import type { CorsOptions } from "cors";
 import dotenv from "dotenv";
 import express from "express";
 import { ChatCompletionMessageParam } from "openai/resources/chat/completions";
@@ -19,11 +20,27 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3001;
 
-app.use(
-  cors({
-    origin: "http://localhost:5173"
-  })
-);
+const allowedOrigins = [
+  "http://localhost:5173",
+  "https://omschatgptapp.vercel.app"
+];
+const vercelPreviewOrigin = /^https:\/\/[a-z0-9-]+\.vercel\.app$/i;
+
+const corsOptions: CorsOptions = {
+  origin(origin, callback) {
+    if (!origin) {
+      return callback(null, true);
+    }
+    if (allowedOrigins.includes(origin) || vercelPreviewOrigin.test(origin)) {
+      return callback(null, true);
+    }
+    return callback(new Error("Not allowed by CORS"));
+  },
+  optionsSuccessStatus: 204
+};
+
+app.use(cors(corsOptions));
+app.options("*", cors(corsOptions));
 app.use(express.json());
 
 app.get("/health", (_req, res) => {
