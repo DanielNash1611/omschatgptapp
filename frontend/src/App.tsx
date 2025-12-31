@@ -6,6 +6,16 @@ import { FormEvent, useMemo, useState } from "react";
 // 3) npm run dev
 // 4) Open http://localhost:5173
 
+const API_BASE =
+  import.meta.env.VITE_BACKEND_URL ??
+  (import.meta.env.DEV ? "http://localhost:3001" : undefined);
+
+if (!API_BASE) {
+  throw new Error("Missing VITE_BACKEND_URL in production build");
+}
+
+console.log("API_BASE:", API_BASE);
+
 type ChatMessage = {
   id: string;
   role: "user" | "assistant";
@@ -17,8 +27,6 @@ type DebugInfo = {
   orderId?: string;
   toolResult?: unknown;
 } | null;
-
-const BACKEND_URL = "http://localhost:3001/api/chat";
 
 const createId = () =>
   typeof crypto !== "undefined" && "randomUUID" in crypto
@@ -51,7 +59,7 @@ function App() {
     setIsLoading(true);
 
     try {
-      const response = await fetch(BACKEND_URL, {
+      const response = await fetch(`${API_BASE}/api/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: userMessage.content })
