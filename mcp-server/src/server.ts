@@ -1,7 +1,7 @@
 import { createServer as createHttpServer } from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { randomUUID } from "node:crypto";
-import { access, readFile } from "node:fs/promises";
+import { access, readFile, readdir } from "node:fs/promises";
 import { dirname, extname, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -22,7 +22,7 @@ const WIDGET_MIME_TYPE = "text/html+skybridge";
 const WIDGET_ASSET_ROUTE = "/widget-assets/";
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const SERVER_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const WIDGET_HTML_FILENAME = "widget.html";
+const WIDGET_HTML_CANDIDATES = ["widget.html", "index.html"];
 const PACKAGED_WIDGET_DIR = resolve(SERVER_ROOT, "widget-dist");
 const FALLBACK_WIDGET_DIR = resolve(REPO_ROOT, "frontend", "dist");
 const DEFAULT_WIDGET_DOMAIN = "https://web-sandbox.oaiusercontent.com";
@@ -154,9 +154,15 @@ type WidgetHtmlResult = {
 
 type WidgetPaths = {
   baseDir: string;
-  htmlPath: string;
   assetsDir: string;
+  htmlCandidates: Array<{ name: string; path: string }>;
   source: "packaged" | "fallback";
+};
+
+type WidgetPathStatus = {
+  htmlPath: string | null;
+  htmlStatus: Record<string, boolean>;
+  assetsExists: boolean;
 };
 
 const logInfo = (...args: unknown[]) => {
@@ -176,8 +182,11 @@ const formatError = (error: unknown): string =>
 
 const buildWidgetPaths = (baseDir: string, source: WidgetPaths["source"]): WidgetPaths => ({
   baseDir,
-  htmlPath: resolve(baseDir, WIDGET_HTML_FILENAME),
   assetsDir: resolve(baseDir, "assets"),
+  htmlCandidates: WIDGET_HTML_CANDIDATES.map(name => ({
+    name,
+    path: resolve(baseDir, name),
+  })),
   source,
 });
 
@@ -193,21 +202,33 @@ const checkPathExists = async (targetPath: string): Promise<boolean> => {
   }
 };
 
-const checkWidgetPaths = async (paths: WidgetPaths) => {
-  const [htmlExists, assetsExists] = await Promise.all([
-    checkPathExists(paths.htmlPath),
-    checkPathExists(paths.assetsDir),
-  ]);
-  return { htmlExists, assetsExists };
+const checkWidgetPaths = async (paths: WidgetPaths): Promise<WidgetPathStatus> => {
+  const assetsExists = await checkPathExists(paths.assetsDir);
+  const htmlChecks = await Promise.all(
+    paths.htmlCandidates.map(async candidate => ({
+      name: candidate.name,
+      path: candidate.path,
+      exists: await checkPathExists(candidate.path),
+    }))
+  );
+  const htmlStatus: Record<string, boolean> = {};
+  let htmlPath: string | null = null;
+  htmlChecks.forEach(result => {
+    htmlStatus[result.name] = result.exists;
+    if (!htmlPath && result.exists) {
+      htmlPath = result.path;
+    }
+  });
+  return { htmlPath, htmlStatus, assetsExists };
 };
 
 const selectWidgetPaths = async () => {
   const primaryStatus = await checkWidgetPaths(PRIMARY_WIDGET_PATHS);
-  if (primaryStatus.htmlExists && primaryStatus.assetsExists) {
+  if (primaryStatus.htmlPath && primaryStatus.assetsExists) {
     return { paths: PRIMARY_WIDGET_PATHS, status: primaryStatus };
   }
   const fallbackStatus = await checkWidgetPaths(FALLBACK_WIDGET_PATHS);
-  if (fallbackStatus.htmlExists && fallbackStatus.assetsExists) {
+  if (fallbackStatus.htmlPath && fallbackStatus.assetsExists) {
     return { paths: FALLBACK_WIDGET_PATHS, status: fallbackStatus };
   }
   return { paths: PRIMARY_WIDGET_PATHS, status: primaryStatus };
@@ -227,9 +248,13 @@ const logWidgetArtifactStatus = async (): Promise<void> => {
     fallback: fallbackStatus,
   });
   const selected = await selectWidgetPaths();
+  const selectedName =
+    selected.paths.htmlCandidates.find(candidate => candidate.path === selected.status.htmlPath)
+      ?.name ?? null;
   logInfo("widget paths selected", {
     source: selected.paths.source,
     baseDir: selected.paths.baseDir,
+    html: selectedName,
   });
 };
 
@@ -270,22 +295,43 @@ const parseImportSpecifiers = (spec: string) =>
       };
     });
 
-const buildWidgetHtml = async (): Promise<WidgetHtmlResult> => {
+const listDirectory = async (dir: string): Promise<string[] | null> => {
   try {
-    const selection = await selectWidgetPaths();
+    const entries = await readdir(dir, { withFileTypes: true });
+    return entries.map(entry => (entry.isDirectory() ? `${entry.name}/` : entry.name));
+  } catch {
+    return null;
+  }
+};
+
+const buildWidgetHtml = async (): Promise<WidgetHtmlResult> => {
+  let selection: Awaited<ReturnType<typeof selectWidgetPaths>> | null = null;
+  try {
+    selection = await selectWidgetPaths();
     const widgetPaths = selection.paths;
+    const selectedHtmlPath = selection.status.htmlPath;
+    const selectedHtmlName =
+      widgetPaths.htmlCandidates.find(candidate => candidate.path === selectedHtmlPath)?.name ??
+      null;
     logInfo("widget assets source", widgetPaths.source, widgetPaths.baseDir);
+    logInfo("widget html selected", {
+      name: selectedHtmlName,
+      path: selectedHtmlPath,
+    });
+    if (!selectedHtmlPath) {
+      throw new Error("No widget HTML file found (widget.html or index.html).");
+    }
     let rawHtml: string;
     try {
-      rawHtml = await readFile(widgetPaths.htmlPath, "utf-8");
+      rawHtml = await readFile(selectedHtmlPath, "utf-8");
     } catch (error) {
       logError("widget html read failed", {
-        path: widgetPaths.htmlPath,
+        path: selectedHtmlPath,
         error: formatError(error),
       });
       throw error;
     }
-    logInfo("widget html read:", widgetPaths.htmlPath, rawHtml.length);
+    logInfo("widget html read:", selectedHtmlPath, rawHtml.length);
     const { cssFiles, jsFiles } = parseWidgetAssets(rawHtml);
     if (cssFiles.length === 0 && jsFiles.length === 0) {
       throw new Error("widget.html did not reference any assets.");
@@ -379,24 +425,53 @@ const buildWidgetHtml = async (): Promise<WidgetHtmlResult> => {
   </body>
 </html>`;
 
-    return { html, source: "dist", bytes: Buffer.byteLength(html) };
+    return {
+      html,
+      source: widgetPaths.source === "packaged" ? "dist" : "fallback",
+      bytes: Buffer.byteLength(html),
+    };
   } catch (error) {
+    const [primaryStatus, fallbackStatus, packagedListing, fallbackListing] = await Promise.all([
+      checkWidgetPaths(PRIMARY_WIDGET_PATHS),
+      checkWidgetPaths(FALLBACK_WIDGET_PATHS),
+      listDirectory(PRIMARY_WIDGET_PATHS.baseDir),
+      listDirectory(FALLBACK_WIDGET_PATHS.baseDir),
+    ]);
+    const selectedHtml = selection?.status.htmlPath ?? null;
+    const selectedName =
+      selection?.paths.htmlCandidates.find(candidate => candidate.path === selectedHtml)?.name ??
+      null;
+    const hasAnyHtml =
+      Object.values(primaryStatus.htmlStatus).some(Boolean) ||
+      Object.values(fallbackStatus.htmlStatus).some(Boolean);
     const fallbackDetails = {
+      candidates: WIDGET_HTML_CANDIDATES,
+      selected: {
+        source: selection?.paths.source ?? null,
+        html: selectedName,
+      },
       packaged: {
         baseDir: PRIMARY_WIDGET_PATHS.baseDir,
-        htmlPath: PRIMARY_WIDGET_PATHS.htmlPath,
         assetsDir: PRIMARY_WIDGET_PATHS.assetsDir,
+        htmlStatus: primaryStatus.htmlStatus,
       },
       fallback: {
         baseDir: FALLBACK_WIDGET_PATHS.baseDir,
-        htmlPath: FALLBACK_WIDGET_PATHS.htmlPath,
         assetsDir: FALLBACK_WIDGET_PATHS.assetsDir,
+        htmlStatus: fallbackStatus.htmlStatus,
+      },
+      listings: {
+        packaged: packagedListing,
+        fallback: fallbackListing,
       },
     };
     logError("widget build unavailable", {
       error: formatError(error),
-      paths: fallbackDetails,
+      details: fallbackDetails,
     });
+    const headline = hasAnyHtml
+      ? "Widget build incomplete: check widget assets."
+      : "Widget build missing: run npm run build at the repo root.";
     const html = `<!doctype html>
 <html lang="en">
   <head>
@@ -405,7 +480,7 @@ const buildWidgetHtml = async (): Promise<WidgetHtmlResult> => {
     <title>OMS Widget</title>
   </head>
   <body>
-    <div>Widget build missing: run npm run build at the repo root.</div>
+    <div>${headline}</div>
     <pre>${JSON.stringify(fallbackDetails, null, 2)}</pre>
   </body>
 </html>`;

@@ -10,7 +10,8 @@
     "build:frontend": "cd frontend && npm ci && npm run build",
     "build:mcp": "cd mcp-server && npm ci && npm run build",
     "copy:widget": "node scripts/copy-widget.js",
-    "build": "npm run build:widget && npm run build:mcp && npm run copy:widget",
+    "verify:widget": "node scripts/verify-widget-build.js",
+    "build": "npm run build:widget && npm run verify:widget && npm run build:mcp && npm run copy:widget",
     "start:mcp": "cd mcp-server && npm start"
   }
 }
