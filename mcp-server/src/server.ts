@@ -1,7 +1,7 @@
 import { createServer as createHttpServer } from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import { dirname, extname, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -150,6 +150,29 @@ const logError = (...args: unknown[]) => {
 
 const formatError = (error: unknown): string =>
   error instanceof Error ? error.stack ?? error.message : String(error);
+
+const logWidgetArtifactStatus = async (): Promise<void> => {
+  const checks = [
+    { label: "widget dist dir", path: WIDGET_DIST_DIR },
+    { label: "widget html", path: WIDGET_HTML_PATH },
+    { label: "widget assets dir", path: WIDGET_ASSET_DIR },
+  ];
+  logInfo("widget paths", {
+    distDir: WIDGET_DIST_DIR,
+    htmlPath: WIDGET_HTML_PATH,
+    assetsDir: WIDGET_ASSET_DIR,
+  });
+  await Promise.all(
+    checks.map(async check => {
+      try {
+        await access(check.path);
+        logInfo(`${check.label} exists`, check.path);
+      } catch (error) {
+        logWarn(`${check.label} missing`, check.path);
+      }
+    })
+  );
+};
 
 type ParsedWidgetAssets = {
   cssFiles: string[];
@@ -1099,4 +1122,5 @@ const server = createHttpServer(async (req, res) => {
 server.listen(PORT, HOST, () => {
   logInfo(`OMS MCP server listening on http://${HOST}:${PORT}${PATH}`);
   logInfo("tool output template:", TOOL_OUTPUT_TEMPLATE_META);
+  void logWidgetArtifactStatus();
 });

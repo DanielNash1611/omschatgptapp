@@ -6,7 +6,10 @@
     "dev:backend": "cd backend && npm run dev",
     "dev:frontend": "cd frontend && npm run dev",
     "dev:mcp": "cd mcp-server && npm run dev",
-    "build:mcp": "cd mcp-server && npm run build",
-    "build:frontend": "cd frontend && npm run build"
+    "build:widget": "cd frontend && npm ci && npm run build",
+    "build:frontend": "cd frontend && npm ci && npm run build",
+    "build:mcp": "cd mcp-server && npm ci && npm run build",
+    "build": "npm run build:widget && npm run build:mcp",
+    "start:mcp": "cd mcp-server && npm start"
   }
 }

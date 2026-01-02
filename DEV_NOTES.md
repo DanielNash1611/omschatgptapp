@@ -30,9 +30,15 @@
 
 ## Where to see logs
 - MCP server stdout shows widget resource requests and asset path lookups (`[MCP:<id>]` prefix).
+- Startup logs also print widget paths and whether `frontend/dist` artifacts exist.
 
 ## Text-only cancellation
 - Use `cancel_order` to initiate, then call `confirm_cancel_order` with the exact phrase `CANCEL <orderId>` if the widget does not render.
+
+## Render build/start (Option A)
+- Build Command: `npm ci && npm run build`
+- Start Command: `npm run start:mcp`
+- Render must build `frontend/dist` so the MCP server can inline the widget bundle at runtime.
 
 ## Mock fallback behavior
 - If `get_order_status` fails due to auth or MCP connectivity in dev, the tool bridge can return order 1002 marked as mock.

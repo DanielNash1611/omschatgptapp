@@ -26,6 +26,11 @@ Small, two-tier TypeScript prototype that wires a ChatGPT-style UI to mock OMS t
 - Widget template URI: `ui://widget/oms-order-v2.html` (served from `frontend/dist` via MCP resource + `http://localhost:8787/widget-assets/`)
 - Quickstart: `cd frontend && npm install && npm run build`, then `cd mcp-server && npm install && npm run dev` (defaults to port 8787)
 
+## Render (Option A)
+- Build Command: `npm ci && npm run build`
+- Start Command: `npm run start:mcp`
+- Note: Render must build `frontend/dist` so the MCP server can inline the widget bundle at runtime.
+
 ## Widget (ChatGPT App UI bundle)
 - Location: `frontend/src/widget.tsx` (entry) with `frontend/widget.html`
 - Built/served by the same Vite project; dev URL `http://localhost:5173/widget.html`
