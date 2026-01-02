@@ -155,10 +155,10 @@ const formatError = (error: unknown): string =>
 
 const buildWidgetHtml = (): WidgetHtmlResult => {
   const cssTag = WIDGET_CSS_URL
-    ? `<link rel="stylesheet" href="${WIDGET_CSS_URL}" />`
+    ? `<link rel="stylesheet" href="${WIDGET_CSS_URL}" onerror="document.getElementById('oms-widget-debug').textContent='[widget] failed to load CSS: ${WIDGET_CSS_URL}'" />`
     : "";
   const jsTag = WIDGET_JS_URL
-    ? `<script type="module" src="${WIDGET_JS_URL}"></script>`
+    ? `<script type="module" src="${WIDGET_JS_URL}" onerror="document.getElementById('oms-widget-debug').textContent='[widget] failed to load JS: ${WIDGET_JS_URL}'"></script>`
     : "";
   const html = `<!doctype html>
 <html lang="en">
@@ -170,6 +170,22 @@ const buildWidgetHtml = (): WidgetHtmlResult => {
   </head>
   <body>
     <div id="oms-root"></div>
+    <pre id="oms-widget-debug" style="white-space:pre-wrap;padding:12px;font:12px/1.4 ui-monospace,monospace;"></pre>
+    <script>
+      (function(){
+        const el = document.getElementById('oms-widget-debug');
+        function show(msg){ if(!el) return; el.textContent = msg; }
+        window.addEventListener('error', (e) => {
+          const msg = "[widget error] " + (e?.message || "unknown") + "\\n" + (e?.filename || "") + ":" + (e?.lineno || "") + ":" + (e?.colno || "");
+          show(msg);
+        });
+        window.addEventListener('unhandledrejection', (e) => {
+          const reason = e?.reason?.stack || e?.reason?.message || String(e?.reason || "unknown rejection");
+          show("[widget unhandledrejection] " + reason);
+        });
+        show("[widget] template loaded; loading assets...");
+      })();
+    </script>
     ${jsTag}
   </body>
 </html>`;
