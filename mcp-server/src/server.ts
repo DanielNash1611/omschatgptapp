@@ -22,16 +22,23 @@ const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const WIDGET_DIST_DIR = resolve(REPO_ROOT, "frontend", "dist");
 const WIDGET_ASSET_DIR = resolve(WIDGET_DIST_DIR, "assets");
 const WIDGET_HTML_PATH = resolve(WIDGET_DIST_DIR, "widget.html");
+
+type OpenAIToolMeta = {
+  "openai/outputTemplate"?: string;
+  "openai/widgetAccessible"?: boolean;
+  "openai/widgetCSP"?: unknown;
+};
+
 const TOOL_OUTPUT_TEMPLATE_META = {
   "openai/outputTemplate": UI_RESOURCE_URI,
-} as const;
+} satisfies OpenAIToolMeta;
 const TOOL_WIDGET_ACCESS_META = {
   "openai/widgetAccessible": true,
-} as const;
-const TOOL_WIDGET_TEMPLATE_META = {
+} satisfies OpenAIToolMeta;
+const TOOL_OUTPUT_AND_ACCESS_META = {
   ...TOOL_OUTPUT_TEMPLATE_META,
   ...TOOL_WIDGET_ACCESS_META,
-} as const;
+} satisfies OpenAIToolMeta;
 const TOOL_DEBUG_INFO = [
   {
     name: "get_order_status",
@@ -43,13 +50,13 @@ const TOOL_DEBUG_INFO = [
   },
   {
     name: "cancel_order",
-    meta: TOOL_WIDGET_TEMPLATE_META,
+    meta: TOOL_OUTPUT_AND_ACCESS_META,
   },
   {
     name: "order_cancel",
-    meta: TOOL_WIDGET_TEMPLATE_META,
+    meta: TOOL_OUTPUT_AND_ACCESS_META,
   },
-] as const;
+] as const satisfies ReadonlyArray<{ name: string; meta: OpenAIToolMeta }>;
 const WIDGET_ASSET_MIME_TYPES: Record<string, string> = {
   ".css": "text/css",
   ".gif": "image/gif",
@@ -366,7 +373,7 @@ const createServer = () => {
       title: "Cancel order",
       description: "Request or confirm an OMS order cancellation.",
       inputSchema: cancelOrderSchema,
-      _meta: TOOL_WIDGET_TEMPLATE_META,
+      _meta: TOOL_OUTPUT_AND_ACCESS_META,
     },
     async ({ orderId, confirmationId, typedPhrase }) =>
       handleOrderCancel({ orderId, confirmationId, typedPhrase })
@@ -377,7 +384,7 @@ const createServer = () => {
       title: "Order cancel",
       description: "Alias for cancel_order.",
       inputSchema: cancelOrderSchema,
-      _meta: TOOL_WIDGET_TEMPLATE_META,
+      _meta: TOOL_OUTPUT_AND_ACCESS_META,
     },
     async ({ orderId, confirmationId, typedPhrase }) =>
       handleOrderCancel({ orderId, confirmationId, typedPhrase })
@@ -486,11 +493,14 @@ const buildCancelConfirmUi = (
 });
 
 const handleDebugListTools = (): CallToolResult => {
-  const tools = TOOL_DEBUG_INFO.map(tool => ({
-    name: tool.name,
-    outputTemplate: tool.meta["openai/outputTemplate"] ?? null,
-    widgetAccessible: tool.meta["openai/widgetAccessible"] ?? false,
-  }));
+  const tools = TOOL_DEBUG_INFO.map(tool => {
+    const meta: OpenAIToolMeta = tool.meta;
+    return {
+      name: tool.name,
+      outputTemplate: meta["openai/outputTemplate"] ?? null,
+      widgetAccessible: meta["openai/widgetAccessible"] ?? false,
+    };
+  });
   return {
     structuredContent: toStructured({ tools }),
     content: [{ type: "text" as const, text: "Tool metadata listed." }],
