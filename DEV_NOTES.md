@@ -26,6 +26,7 @@
 1) Build the frontend (`cd frontend && npm run build`) so `frontend/dist` exists.
 2) Start MCP server (`cd mcp-server && npm run dev`).
 3) Call `get_order_status` for order 1002 and confirm the widget renders instead of plain tool text.
+4) The Skybridge HTML inlines JS/CSS from `frontend/dist/assets` (no external asset fetch required).
 
 ## Where to see logs
 - MCP server stdout shows widget resource requests and asset path lookups (`[MCP]` prefix).

@@ -22,12 +22,6 @@ const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const WIDGET_DIST_DIR = resolve(REPO_ROOT, "frontend", "dist");
 const WIDGET_ASSET_DIR = resolve(WIDGET_DIST_DIR, "assets");
 const WIDGET_HTML_PATH = resolve(WIDGET_DIST_DIR, "widget.html");
-const ensureTrailingSlash = (value: string): string =>
-  value.endsWith("/") ? value : `${value}/`;
-const WIDGET_ASSET_BASE_URL = ensureTrailingSlash(
-  process.env.OMS_WIDGET_ASSET_BASE_URL ??
-    `http://localhost:${PORT}${WIDGET_ASSET_ROUTE}`
-);
 const TOOL_OUTPUT_TEMPLATE_META = {
   "openai/outputTemplate": UI_RESOURCE_URI,
 } as const;
@@ -86,14 +80,152 @@ type WidgetHtmlResult = {
   bytes: number;
 };
 
+type ParsedWidgetAssets = {
+  cssFiles: string[];
+  jsFiles: string[];
+};
+
+const parseWidgetAssets = (html: string): ParsedWidgetAssets => {
+  const cssFiles: string[] = [];
+  const jsFiles: string[] = [];
+  const seen = new Set<string>();
+  const regex = /(?:src|href)=["']\/assets\/([^"']+)["']/g;
+  let match: RegExpExecArray | null;
+  while ((match = regex.exec(html)) !== null) {
+    const asset = match[1];
+    if (seen.has(asset)) continue;
+    seen.add(asset);
+    if (asset.endsWith(".css")) {
+      cssFiles.push(asset);
+    } else if (asset.endsWith(".js")) {
+      jsFiles.push(asset);
+    }
+  }
+  return { cssFiles, jsFiles };
+};
+
+const parseImportSpecifiers = (spec: string) =>
+  spec
+    .split(",")
+    .map(item => item.trim())
+    .filter(Boolean)
+    .map(item => {
+      const [exportName, localName] = item.split(/\s+as\s+/);
+      return {
+        exportName: exportName.trim(),
+        localName: (localName ?? exportName).trim(),
+      };
+    });
+
 const buildWidgetHtml = async (): Promise<WidgetHtmlResult> => {
   try {
-    const raw = await readFile(WIDGET_HTML_PATH, "utf-8");
-    const html = raw.replace(/(src|href)=["']\/assets\//g, `$1="${WIDGET_ASSET_BASE_URL}`);
+    let rawHtml: string;
+    try {
+      rawHtml = await readFile(WIDGET_HTML_PATH, "utf-8");
+    } catch (error) {
+      console.error("[MCP] widget html read failed", {
+        path: WIDGET_HTML_PATH,
+        error: String(error),
+      });
+      throw error;
+    }
+    const { cssFiles, jsFiles } = parseWidgetAssets(rawHtml);
+    if (cssFiles.length === 0 && jsFiles.length === 0) {
+      throw new Error("widget.html did not reference any assets.");
+    }
+
+    if (jsFiles.length === 0) {
+      throw new Error("No widget JS bundle found in dist assets.");
+    }
+
+    const cssContents = await Promise.all(
+      cssFiles.map(async name => {
+        try {
+          return await readFile(resolve(WIDGET_ASSET_DIR, name), "utf-8");
+        } catch (error) {
+          console.error("[MCP] widget css read failed", { file: name, error: String(error) });
+          throw error;
+        }
+      })
+    );
+    const jsContents = await Promise.all(
+      jsFiles.map(async name => {
+        try {
+          return await readFile(resolve(WIDGET_ASSET_DIR, name), "utf-8");
+        } catch (error) {
+          console.error("[MCP] widget js read failed", { file: name, error: String(error) });
+          throw error;
+        }
+      })
+    );
+
+    const styleBlocks = cssContents.map(css => `<style>${css}</style>`).join("\n");
+    const jsMap = new Map<string, string>();
+    jsFiles.forEach((name, index) => {
+      jsMap.set(name, jsContents[index]);
+    });
+    const clientFile = jsFiles.find(name => name.startsWith("client-"));
+    const widgetFile = jsFiles.find(name => name.startsWith("widget-")) ?? jsFiles[0];
+    const clientExports: string[] = [];
+
+    if (clientFile) {
+      const widgetCode = jsMap.get(widgetFile) ?? "";
+      const importRegex = new RegExp(
+        `import\\s*\\{([^}]+)\\}\\s*from["']\\./${clientFile}["'];?`
+      );
+      const match = widgetCode.match(importRegex);
+      if (match) {
+        const specifiers = parseImportSpecifiers(match[1]);
+        specifiers.forEach(spec => {
+          if (!clientExports.includes(spec.exportName)) {
+            clientExports.push(spec.exportName);
+          }
+        });
+        const destructured = specifiers
+          .map(spec =>
+            spec.exportName === spec.localName
+              ? spec.exportName
+              : `${spec.exportName}: ${spec.localName}`
+          )
+          .join(", ");
+        const replacement = `const { ${destructured} } = globalThis.__omsWidgetClient || {};`;
+        jsMap.set(widgetFile, widgetCode.replace(importRegex, replacement));
+      }
+    }
+
+    const orderedJsFiles = clientFile
+      ? [clientFile, ...jsFiles.filter(name => name !== clientFile)]
+      : [...jsFiles];
+    const combinedJs = orderedJsFiles
+      .map(name => {
+        const code = jsMap.get(name) ?? "";
+        if (name === clientFile && clientExports.length > 0) {
+          return `${code}\n;globalThis.__omsWidgetClient = { ${clientExports.join(", ")} };`;
+        }
+        return code;
+      })
+      .join("\n");
+    const scriptBlocks = `<script type="module">${combinedJs}</script>`;
+
+    const html = `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>OMS Widget</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <div id="oms-widget-marker" style="display:none">OMS Widget Loaded</div>
+    ${styleBlocks}
+    ${scriptBlocks}
+  </body>
+</html>`;
+
     return { html, source: "dist", bytes: Buffer.byteLength(html) };
   } catch (error) {
-    console.error("[mcp] widget html unavailable", {
-      path: WIDGET_HTML_PATH,
+    console.error("[MCP] widget build unavailable", {
+      path: WIDGET_ASSET_DIR,
       error: String(error),
     });
     const html = `<!doctype html>
@@ -104,7 +236,7 @@ const buildWidgetHtml = async (): Promise<WidgetHtmlResult> => {
     <title>OMS Widget</title>
   </head>
   <body>
-    <div>Widget bundle not found. Build the frontend or set OMS_WIDGET_ASSET_BASE_URL.</div>
+    <div>Widget build missing: run npm run build in frontend.</div>
   </body>
 </html>`;
     return { html, source: "fallback", bytes: Buffer.byteLength(html) };
@@ -121,7 +253,7 @@ const registerWidgetResource = (server: McpServer): void => {
       description: "OMS order widget template for ChatGPT Apps.",
     },
     async () => {
-      console.log("[MCP] widget resource requested:", UI_RESOURCE_URI);
+      console.log("[MCP] UI resource requested:", UI_RESOURCE_URI);
       const result = await buildWidgetHtml();
       console.log("[MCP] widget html served", {
         source: result.source,
@@ -133,6 +265,7 @@ const registerWidgetResource = (server: McpServer): void => {
             uri: UI_RESOURCE_URI,
             mimeType: WIDGET_MIME_TYPE,
             text: result.html,
+            _meta: { "openai/widgetPrefersBorder": true },
           },
         ],
       };
