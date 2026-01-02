@@ -24,7 +24,7 @@ Small, two-tier TypeScript prototype that wires a ChatGPT-style UI to mock OMS t
 - Stack: TypeScript + `@modelcontextprotocol/sdk`
 - Tools: `get_order_status(orderId: string)`, `cancel_order(orderId: string, confirmationId?: string, typedPhrase?: string)`
 - Widget template URI: `ui://widget/oms-order-v2.html` (served from `frontend/dist` via MCP resource + `http://localhost:8787/widget-assets/`)
-- Quickstart: `cd mcp-server && npm install && npm run dev` (defaults to port 8787)
+- Quickstart: `cd frontend && npm install && npm run build`, then `cd mcp-server && npm install && npm run dev` (defaults to port 8787)
 
 ## Widget (ChatGPT App UI bundle)
 - Location: `frontend/src/widget.tsx` (entry) with `frontend/widget.html`

@@ -22,6 +22,14 @@
 2) Type the exact phrase `CANCEL <orderId>` and submit -> order transitions to Cancelled and renders the inquiry card.
 3) Use "No, keep order" to dismiss and return to the inquiry card without cancelling.
 
+## How to verify widget loads
+1) Build the frontend (`cd frontend && npm run build`) so `frontend/dist` exists.
+2) Start MCP server (`cd mcp-server && npm run dev`).
+3) Call `get_order_status` for order 1002 and confirm the widget renders instead of plain tool text.
+
+## Where to see logs
+- MCP server stdout shows widget resource requests and asset path lookups (`[MCP]` prefix).
+
 ## Mock fallback behavior
 - If `get_order_status` fails due to auth or MCP connectivity in dev, the tool bridge can return order 1002 marked as mock.
 - Enable explicitly in production with `OMS_PROTOTYPE_ALLOW_MOCK_FALLBACK=true`.

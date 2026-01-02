@@ -32,8 +32,11 @@ const TOOL_OUTPUT_TEMPLATE_META = {
   "openai/outputTemplate": UI_RESOURCE_URI,
 } as const;
 const TOOL_WIDGET_ACCESS_META = {
-  "openai/outputTemplate": UI_RESOURCE_URI,
   "openai/widgetAccessible": true,
+} as const;
+const TOOL_WIDGET_TEMPLATE_META = {
+  ...TOOL_OUTPUT_TEMPLATE_META,
+  ...TOOL_WIDGET_ACCESS_META,
 } as const;
 const WIDGET_ASSET_MIME_TYPES: Record<string, string> = {
   ".css": "text/css",
@@ -47,6 +50,8 @@ const WIDGET_ASSET_MIME_TYPES: Record<string, string> = {
   ".png": "image/png",
   ".svg": "image/svg+xml",
   ".webp": "image/webp",
+  ".woff": "font/woff",
+  ".woff2": "font/woff2",
 };
 
 const orderIdParam = {
@@ -75,16 +80,23 @@ const cancelOrderSchema = z.object(cancelOrderParams);
 
 const pendingConfirmations: Record<string, { orderId: string; expiresAt: number }> = {};
 
-const buildWidgetHtml = async (): Promise<string> => {
+type WidgetHtmlResult = {
+  html: string;
+  source: "dist" | "fallback";
+  bytes: number;
+};
+
+const buildWidgetHtml = async (): Promise<WidgetHtmlResult> => {
   try {
     const raw = await readFile(WIDGET_HTML_PATH, "utf-8");
-    return raw.replace(/(src|href)=["']\/assets\//g, `$1="${WIDGET_ASSET_BASE_URL}`);
+    const html = raw.replace(/(src|href)=["']\/assets\//g, `$1="${WIDGET_ASSET_BASE_URL}`);
+    return { html, source: "dist", bytes: Buffer.byteLength(html) };
   } catch (error) {
-    console.warn("[mcp] widget html unavailable", {
+    console.error("[mcp] widget html unavailable", {
       path: WIDGET_HTML_PATH,
       error: String(error),
     });
-    return `<!doctype html>
+    const html = `<!doctype html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
@@ -95,6 +107,7 @@ const buildWidgetHtml = async (): Promise<string> => {
     <div>Widget bundle not found. Build the frontend or set OMS_WIDGET_ASSET_BASE_URL.</div>
   </body>
 </html>`;
+    return { html, source: "fallback", bytes: Buffer.byteLength(html) };
   }
 };
 
@@ -108,13 +121,18 @@ const registerWidgetResource = (server: McpServer): void => {
       description: "OMS order widget template for ChatGPT Apps.",
     },
     async () => {
-      const html = await buildWidgetHtml();
+      console.log("[MCP] widget resource requested:", UI_RESOURCE_URI);
+      const result = await buildWidgetHtml();
+      console.log("[MCP] widget html served", {
+        source: result.source,
+        bytes: result.bytes,
+      });
       return {
         contents: [
           {
             uri: UI_RESOURCE_URI,
             mimeType: WIDGET_MIME_TYPE,
-            text: html,
+            text: result.html,
           },
         ],
       };
@@ -136,8 +154,14 @@ const serveWidgetAsset = async (
   pathname: string,
   res: ServerResponse
 ): Promise<boolean> => {
+  console.log("[MCP] widget asset request:", pathname);
   const assetPath = resolveWidgetAssetPath(pathname);
-  if (!assetPath) return false;
+  if (!assetPath) {
+    console.warn("[MCP] widget asset invalid path:", pathname);
+    res.statusCode = 404;
+    res.end();
+    return true;
+  }
   try {
     const data = await readFile(assetPath);
     const ext = extname(assetPath).toLowerCase();
@@ -148,7 +172,9 @@ const serveWidgetAsset = async (
     );
     res.setHeader("Content-Length", data.length);
     res.end(data);
+    console.log("[MCP] widget asset served:", pathname, data.length);
   } catch (error) {
+    console.warn("[MCP] widget asset 404:", pathname);
     res.statusCode = 404;
     res.end();
   }
@@ -162,6 +188,7 @@ const createServer = () => {
   });
 
   registerWidgetResource(server);
+  console.log("[MCP] widget resource registered:", UI_RESOURCE_URI, WIDGET_MIME_TYPE);
 
   server.registerTool(
     "get_order_status",
@@ -190,7 +217,7 @@ const createServer = () => {
       title: "Cancel order",
       description: "Request or confirm an OMS order cancellation.",
       inputSchema: cancelOrderSchema,
-      _meta: TOOL_WIDGET_ACCESS_META,
+      _meta: TOOL_WIDGET_TEMPLATE_META,
     },
     async ({ orderId, confirmationId, typedPhrase }) =>
       handleOrderCancel({ orderId, confirmationId, typedPhrase })
@@ -201,7 +228,7 @@ const createServer = () => {
       title: "Order cancel",
       description: "Alias for cancel_order.",
       inputSchema: cancelOrderSchema,
-      _meta: TOOL_OUTPUT_TEMPLATE_META,
+      _meta: TOOL_WIDGET_TEMPLATE_META,
     },
     async ({ orderId, confirmationId, typedPhrase }) =>
       handleOrderCancel({ orderId, confirmationId, typedPhrase })
@@ -641,4 +668,5 @@ const server = createHttpServer(async (req, res) => {
 
 server.listen(PORT, HOST, () => {
   console.log(`OMS MCP server listening on http://${HOST}:${PORT}${PATH}`);
+  console.log("[MCP] tool output template:", TOOL_OUTPUT_TEMPLATE_META);
 });
