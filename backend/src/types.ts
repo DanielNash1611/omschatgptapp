@@ -22,7 +22,9 @@ export interface OrderTotals {
 
 export interface OrderItem {
   id: string;
+  sku?: string;
   name: string;
+  category?: string;
   quantity: number;
   unitPrice: number;
   subtotal?: number;

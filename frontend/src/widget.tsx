@@ -407,6 +407,13 @@ function Widget() {
 
   const ui = useMemo(() => deriveUi(latest), [latest]);
 
+  useEffect(() => {
+    if (import.meta.env?.DEV) {
+      console.debug("[oms-widget] latest tool output", latest);
+      console.debug("[oms-widget] resolved ui", ui);
+    }
+  }, [latest, ui]);
+
   const callTool = async (name: string, args: Record<string, unknown>) => {
     if (typeof window.openai?.actions?.callTool === "function") {
       return window.openai.actions.callTool({ name, arguments: args });
@@ -418,11 +425,14 @@ function Widget() {
   };
 
   const handleConfirm = async (typedPhrase: string, payload: CancelConfirmProps) => {
-    await callTool("order_cancel", {
+    const result = await callTool("order_cancel", {
       orderId: payload.order.orderId,
       confirmationId: payload.confirmationId,
       typedPhrase,
     });
+    if (result !== undefined) {
+      setLatest(result);
+    }
   };
 
   const handleDeny = (payload: CancelConfirmProps) => {

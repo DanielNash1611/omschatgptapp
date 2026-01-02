@@ -2,29 +2,35 @@ import { CancelOrderResult, Order } from "./types";
 
 const baseItems = [
   {
-    id: "guitar-electric",
-    name: "Electric guitar",
+    id: "guitar-strat-black",
+    sku: "STRAT-PLAYER-BLK",
+    name: "Fender Player Stratocaster - Black",
+    category: "Electric Guitar",
     quantity: 1,
-    unitPrice: 899,
-    subtotal: 899,
+    unitPrice: 799.99,
+    subtotal: 799.99,
     imageUrl:
       "https://images.unsplash.com/photo-1511379938547-c1f69419868d?auto=format&fit=crop&w=400&q=80"
   },
   {
-    id: "instrument-cables",
-    name: "Instrument cables (2-pack)",
+    id: "instrument-cables-10ft-2pk",
+    sku: "INSTR-CABLE-10FT-2PK",
+    name: "Instrument Cable 10ft (2-Pack)",
+    category: "Cables",
     quantity: 2,
-    unitPrice: 24.99,
-    subtotal: 49.98,
+    unitPrice: 29.99,
+    subtotal: 59.98,
     imageUrl:
       "https://images.unsplash.com/photo-1470229538611-16ba8c7ffbd7?auto=format&fit=crop&w=400&q=80"
   },
   {
-    id: "guitar-amp",
-    name: "Guitar amp",
+    id: "boss-katana-50mkii",
+    sku: "BOSS-KATANA-50MKII",
+    name: 'BOSS Katana-50 MkII 1x12" 50W Combo Amp',
+    category: "Amplifier",
     quantity: 1,
-    unitPrice: 499,
-    subtotal: 499,
+    unitPrice: 619.99,
+    subtotal: 619.99,
     imageUrl:
       "https://images.unsplash.com/photo-1507878866276-a947ef722fee?auto=format&fit=crop&w=400&q=80"
   }
@@ -50,7 +56,7 @@ const mockOrders: Order[] = [
       country: "US"
     },
     payment: { method: "Visa", last4: "4242" },
-    totals: { subtotal: 1447.98, shipping: 29, tax: 114, total: 1590.98, currency: "USD" },
+    totals: { subtotal: 1479.96, shipping: 29, tax: 123.56, total: 1632.52, currency: "USD" },
     items: baseItems.map(item => ({ ...item }))
   },
   {
@@ -72,7 +78,7 @@ const mockOrders: Order[] = [
       country: "US"
     },
     payment: { method: "Visa", last4: "4242" },
-    totals: { subtotal: 1447.98, shipping: 25, tax: 116.5, total: 1589.48, currency: "USD" },
+    totals: { subtotal: 1479.96, shipping: 25, tax: 118.4, total: 1623.36, currency: "USD" },
     items: baseItems.map(item => ({ ...item }))
   },
   {
@@ -94,7 +100,7 @@ const mockOrders: Order[] = [
       country: "US"
     },
     payment: { method: "Mastercard", last4: "2020" },
-    totals: { subtotal: 1447.98, shipping: 19, tax: 120, total: 1586.98, currency: "USD" },
+    totals: { subtotal: 1479.96, shipping: 19, tax: 121.96, total: 1620.92, currency: "USD" },
     items: baseItems.map(item => ({ ...item }))
   }
 ];
