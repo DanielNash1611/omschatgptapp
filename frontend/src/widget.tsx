@@ -1,5 +1,4 @@
 import React, { useEffect, useMemo, useState } from "react";
-import ReactDOM from "react-dom/client";
 import "./widget.css";
 
 declare global {
@@ -449,7 +448,7 @@ function CancelConfirmCard({
   );
 }
 
-function Widget() {
+export function Widget() {
   const [latest, setLatest] = useState<unknown>(() => getHostToolState());
 
   useEffect(() => {
@@ -524,15 +523,5 @@ function Widget() {
         />
       )}
     </div>
-  );
-}
-
-const rootEl = document.getElementById("root");
-if (rootEl) {
-  const root = ReactDOM.createRoot(rootEl);
-  root.render(
-    <React.StrictMode>
-      <Widget />
-    </React.StrictMode>
   );
 }

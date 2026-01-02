@@ -6,5 +6,7 @@ backend/node_modules
 backend/dist
 frontend/node_modules
 frontend/dist
+frontend/public/widget/widget.js
+frontend/public/widget/widget.css
 mcp-server/widget-dist
 *.tsbuildinfo
