@@ -11,6 +11,7 @@ import type { CancelOrderResult, Order } from "./types.js";
 const PATH = "/mcp";
 const PORT = Number(process.env.PORT ?? "8787");
 const HOST = "0.0.0.0";
+const CONFIRMATION_TTL_MS = 10 * 60 * 1000;
 
 const orderIdParam = {
   orderId: z
@@ -19,63 +20,314 @@ const orderIdParam = {
     .describe("The OMS order ID to look up or cancel."),
 };
 
+const cancelOrderParams = {
+  orderId: z
+    .string()
+    .min(1, "orderId is required")
+    .describe("The OMS order ID to cancel."),
+  confirmationId: z
+    .string()
+    .optional()
+    .describe("Echoed confirmation ID required to finalize cancellation."),
+  typedPhrase: z
+    .string()
+    .optional()
+    .describe("User-entered phrase matching `CANCEL <orderId>` required to finalize cancellation."),
+};
+
+const pendingConfirmations: Record<string, { orderId: string; expiresAt: number }> = {};
+
 const createServer = () => {
   const server = new McpServer({
     name: "oms-mcp-server",
     version: "0.1.0",
   });
 
-  server.tool(
-    "get_order_status",
-    orderIdParam,
-    async ({ orderId }): Promise<CallToolResult> => {
-      const order = await getOrderStatus(orderId);
-
-      if (!order) {
-        const text = `Order ${orderId} was not found in the OMS.`;
-        return {
-          structuredContent: toStructured({ orderId, status: "NOT_FOUND" }),
-          content: [{ type: "text" as const, text }],
-          isError: true,
-        };
-      }
-
-      return {
-        structuredContent: toStructured(order),
-        content: [{ type: "text" as const, text: summarizeOrder(order) }],
-      };
-    }
+  server.tool("get_order_status", orderIdParam, async ({ orderId }) =>
+    handleOrderInquiry(orderId)
   );
+  server.tool("order_inquiry", orderIdParam, async ({ orderId }) => handleOrderInquiry(orderId));
 
   server.tool(
     "cancel_order",
-    orderIdParam,
-    async ({ orderId }): Promise<CallToolResult> => {
-      const result = await cancelOrder(orderId);
-
-      const structuredContent = toStructured({ orderId, ...result });
-      const text = result.success
-        ? describeCancelled(orderId, result)
-        : describeCancelFailure(orderId, result);
-
-      return {
-        structuredContent,
-        content: [{ type: "text" as const, text }],
-        isError: !result.success,
-      };
-    }
+    cancelOrderParams,
+    async ({ orderId, confirmationId, typedPhrase }) =>
+      handleOrderCancel({ orderId, confirmationId, typedPhrase })
+  );
+  server.tool(
+    "order_cancel",
+    cancelOrderParams,
+    async ({ orderId, confirmationId, typedPhrase }) =>
+      handleOrderCancel({ orderId, confirmationId, typedPhrase })
   );
 
   return server;
 };
 
+const requiredPhraseFor = (orderId: string): string => `CANCEL ${orderId}`;
+
+const formatCurrency = (amount?: number | null, currency = "USD"): string => {
+  if (typeof amount !== "number") return "";
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency,
+    minimumFractionDigits: 2,
+  }).format(amount);
+};
+
+const formatDateTime = (value?: string | null): string | null => {
+  if (!value) return null;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleString("en-US", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
+};
+
+const itemCount = (order?: Order | null): number =>
+  order?.items?.reduce((sum, item) => sum + (item.quantity ?? 0), 0) ?? 0;
+
+const buildOrderStub = (orderId: string): Order => ({
+  orderId,
+  status: "NOT_FOUND",
+  customerName: "Unknown",
+  carrier: null,
+  trackingNumber: null,
+  eta: null,
+  canCancel: false,
+  placedAt: null,
+  shippingMethod: null,
+  shippingAddress: null,
+  payment: null,
+  totals: null,
+  items: [],
+  cancelledAt: null,
+});
+
+const buildOrderInquiryUi = (order: Order): Record<string, unknown> => ({
+  type: "order_inquiry_card",
+  props: { order },
+});
+
+const buildCancelConfirmUi = (
+  order: Order,
+  confirmationId: string,
+  expiresAt: string,
+  requiredPhrase: string,
+  errorMessage?: string
+): Record<string, unknown> => ({
+  type: "cancel_confirm",
+  props: {
+    order,
+    orderSummary: {
+      orderId: order.orderId,
+      status: order.status,
+      itemCount: itemCount(order),
+      total: order.totals?.total ?? null,
+      currency: order.totals?.currency ?? "USD",
+    },
+    confirmationId,
+    requiredPhrase,
+    expiresAt,
+    warning: "Cancellation cannot be undone.",
+    errorMessage,
+  },
+});
+
+const handleOrderInquiry = async (orderId: string): Promise<CallToolResult> => {
+  const order = await getOrderStatus(orderId);
+
+  if (!order) {
+    const text = `Order ${orderId} was not found in the OMS.`;
+    const stub = buildOrderStub(orderId);
+    return {
+      structuredContent: toStructured({ orderId, status: "NOT_FOUND" }),
+      content: [{ type: "text" as const, text }],
+      ui: buildOrderInquiryUi(stub),
+      isError: true,
+    };
+  }
+
+  return {
+    structuredContent: toStructured({ order }),
+    content: [{ type: "text" as const, text: summarizeOrder(order) }],
+    ui: buildOrderInquiryUi(order),
+  };
+};
+
+type CancelOrderArgs = {
+  orderId: string;
+  confirmationId?: string;
+  typedPhrase?: string;
+};
+
+const handleOrderCancel = async ({
+  orderId,
+  confirmationId,
+  typedPhrase,
+}: CancelOrderArgs): Promise<CallToolResult> => {
+  const order = await getOrderStatus(orderId);
+  if (!order) {
+    const text = `Order ${orderId} was not found; nothing was cancelled.`;
+    return {
+      structuredContent: toStructured({ orderId, success: false, reason: "ORDER_NOT_FOUND" }),
+      content: [{ type: "text" as const, text }],
+      ui: buildOrderInquiryUi(buildOrderStub(orderId)),
+      isError: true,
+    };
+  }
+
+  const requiredPhrase = requiredPhraseFor(orderId);
+  const confirmationKey = orderId;
+  const now = Date.now();
+  const existing = pendingConfirmations[confirmationKey];
+
+  if (existing && existing.expiresAt < now) {
+    delete pendingConfirmations[confirmationKey];
+  }
+
+  if (!confirmationId || !typedPhrase) {
+    if (!order.canCancel) {
+      const text = describeCancelFailure(orderId, {
+        success: false,
+        reason: "NOT_CANCELLABLE",
+        status: order.status,
+      });
+      return {
+        structuredContent: toStructured({
+          orderId,
+          success: false,
+          reason: "NOT_CANCELLABLE",
+          status: order.status,
+          order,
+        }),
+        content: [{ type: "text" as const, text }],
+        ui: buildOrderInquiryUi(order),
+        isError: true,
+      };
+    }
+
+    const expiresAtMs = now + CONFIRMATION_TTL_MS;
+    pendingConfirmations[confirmationKey] = { orderId, expiresAt: expiresAtMs };
+    const expiresAt = new Date(expiresAtMs).toISOString();
+    const text = `Confirm cancellation by typing "${requiredPhrase}" before proceeding.`;
+
+    return {
+      structuredContent: toStructured({
+        orderId,
+        requiresConfirmation: true,
+        confirmationId: confirmationKey,
+        confirmationExpiresAt: expiresAt,
+        requiredPhrase,
+        reason: "CONFIRMATION_REQUIRED",
+        order,
+      }),
+      content: [{ type: "text" as const, text }],
+      ui: buildCancelConfirmUi(order, confirmationKey, expiresAt, requiredPhrase),
+    };
+  }
+
+  if (confirmationId !== confirmationKey) {
+    const text = "Confirmation ID does not match this order.";
+    return {
+      structuredContent: toStructured({
+        orderId,
+        success: false,
+        reason: "INVALID_CONFIRMATION",
+        status: order.status,
+      }),
+      content: [{ type: "text" as const, text }],
+      ui: buildCancelConfirmUi(
+        order,
+        confirmationKey,
+        new Date(now + CONFIRMATION_TTL_MS).toISOString(),
+        requiredPhrase,
+        text
+      ),
+      isError: true,
+    };
+  }
+
+  const confirmation = pendingConfirmations[confirmationKey];
+  if (!confirmation || confirmation.expiresAt < now) {
+    const text = "Cancellation confirmation expired. Start again to cancel.";
+    if (confirmation) {
+      delete pendingConfirmations[confirmationKey];
+    }
+    return {
+      structuredContent: toStructured({
+        orderId,
+        success: false,
+        reason: "CONFIRMATION_EXPIRED",
+        status: order.status,
+      }),
+      content: [{ type: "text" as const, text }],
+      ui: buildCancelConfirmUi(
+        order,
+        confirmationKey,
+        new Date(now + CONFIRMATION_TTL_MS).toISOString(),
+        requiredPhrase,
+        text
+      ),
+      isError: true,
+    };
+  }
+
+  if (typedPhrase !== requiredPhrase) {
+    const text = `Type the exact phrase "${requiredPhrase}" to confirm cancellation.`;
+    return {
+      structuredContent: toStructured({
+        orderId,
+        success: false,
+        reason: "INVALID_PHRASE",
+        status: order.status,
+        requiredPhrase,
+      }),
+      content: [{ type: "text" as const, text }],
+      ui: buildCancelConfirmUi(order, confirmationKey, new Date(confirmation.expiresAt).toISOString(), requiredPhrase, text),
+      isError: true,
+    };
+  }
+
+  const result = await cancelOrder(orderId);
+  delete pendingConfirmations[confirmationKey];
+  const updatedOrder = (await getOrderStatus(orderId)) ?? order;
+
+  const structuredContent = toStructured({ orderId, ...result, order: updatedOrder });
+  const text = result.success
+    ? describeCancelled(orderId, result)
+    : describeCancelFailure(orderId, result);
+
+  return {
+    structuredContent,
+    content: [{ type: "text" as const, text }],
+    ui: buildOrderInquiryUi(updatedOrder),
+    isError: !result.success,
+  };
+};
+
 const summarizeOrder = (order: Order): string => {
   const parts = [
     `Order ${order.orderId} is ${order.status}.`,
+    order.placedAt ? `Placed: ${formatDateTime(order.placedAt) ?? order.placedAt}.` : "",
     order.customerName ? `Customer: ${order.customerName}.` : "",
+    order.shippingMethod ? `Shipping: ${order.shippingMethod}.` : "",
+    order.shippingAddress
+      ? `Ship to ${order.shippingAddress.city}, ${order.shippingAddress.state}.`
+      : "",
     order.eta ? `ETA: ${order.eta}.` : "",
     order.carrier ? `Carrier: ${order.carrier}.` : "",
     order.trackingNumber ? `Tracking: ${order.trackingNumber}.` : "",
+    order.payment?.method
+      ? `Payment: ${order.payment.method}${
+          order.payment.last4 ? ` ending in ${order.payment.last4}` : ""
+        }.`
+      : "",
+    order.totals?.total != null
+      ? `Total: ${formatCurrency(order.totals.total, order.totals.currency)}.`
+      : "",
+    order.items?.length ? `Items: ${itemCount(order)}.` : "",
     order.canCancel ? "Cancellable: yes." : "Cancellable: no.",
   ].filter(Boolean);
 
