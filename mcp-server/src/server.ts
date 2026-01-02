@@ -21,9 +21,25 @@ const UI_RESOURCE_URI = "ui://widget/oms-order-v2.html";
 const WIDGET_MIME_TYPE = "text/html+skybridge";
 const WIDGET_ASSET_ROUTE = "/widget-assets/";
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
-const WIDGET_DIST_DIR = resolve(REPO_ROOT, "frontend", "dist");
-const WIDGET_ASSET_DIR = resolve(WIDGET_DIST_DIR, "assets");
-const WIDGET_HTML_PATH = resolve(WIDGET_DIST_DIR, "widget.html");
+const SERVER_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const WIDGET_HTML_FILENAME = "widget.html";
+const PACKAGED_WIDGET_DIR = resolve(SERVER_ROOT, "widget-dist");
+const FALLBACK_WIDGET_DIR = resolve(REPO_ROOT, "frontend", "dist");
+const DEFAULT_WIDGET_DOMAIN = "https://web-sandbox.oaiusercontent.com";
+const WIDGET_DOMAIN = process.env.OMS_WIDGET_DOMAIN ?? DEFAULT_WIDGET_DOMAIN;
+const WIDGET_RESOURCE_DOMAINS = [
+  WIDGET_DOMAIN,
+  "https://images.unsplash.com",
+];
+const parseCommaSeparatedEnv = (value?: string): string[] =>
+  (value ?? "")
+    .split(",")
+    .map(item => item.trim())
+    .filter(Boolean);
+const WIDGET_CONNECT_DOMAINS = parseCommaSeparatedEnv(
+  process.env.OMS_WIDGET_CONNECT_DOMAINS
+);
+const WIDGET_DESCRIPTION = "OMS order status and cancellation widget.";
 
 type OpenAIToolMeta = {
   "openai/outputTemplate"?: string;
@@ -136,6 +152,13 @@ type WidgetHtmlResult = {
   bytes: number;
 };
 
+type WidgetPaths = {
+  baseDir: string;
+  htmlPath: string;
+  assetsDir: string;
+  source: "packaged" | "fallback";
+};
+
 const logInfo = (...args: unknown[]) => {
   console.log(LOG_PREFIX, ...args);
 };
@@ -151,27 +174,63 @@ const logError = (...args: unknown[]) => {
 const formatError = (error: unknown): string =>
   error instanceof Error ? error.stack ?? error.message : String(error);
 
+const buildWidgetPaths = (baseDir: string, source: WidgetPaths["source"]): WidgetPaths => ({
+  baseDir,
+  htmlPath: resolve(baseDir, WIDGET_HTML_FILENAME),
+  assetsDir: resolve(baseDir, "assets"),
+  source,
+});
+
+const PRIMARY_WIDGET_PATHS = buildWidgetPaths(PACKAGED_WIDGET_DIR, "packaged");
+const FALLBACK_WIDGET_PATHS = buildWidgetPaths(FALLBACK_WIDGET_DIR, "fallback");
+
+const checkPathExists = async (targetPath: string): Promise<boolean> => {
+  try {
+    await access(targetPath);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const checkWidgetPaths = async (paths: WidgetPaths) => {
+  const [htmlExists, assetsExists] = await Promise.all([
+    checkPathExists(paths.htmlPath),
+    checkPathExists(paths.assetsDir),
+  ]);
+  return { htmlExists, assetsExists };
+};
+
+const selectWidgetPaths = async () => {
+  const primaryStatus = await checkWidgetPaths(PRIMARY_WIDGET_PATHS);
+  if (primaryStatus.htmlExists && primaryStatus.assetsExists) {
+    return { paths: PRIMARY_WIDGET_PATHS, status: primaryStatus };
+  }
+  const fallbackStatus = await checkWidgetPaths(FALLBACK_WIDGET_PATHS);
+  if (fallbackStatus.htmlExists && fallbackStatus.assetsExists) {
+    return { paths: FALLBACK_WIDGET_PATHS, status: fallbackStatus };
+  }
+  return { paths: PRIMARY_WIDGET_PATHS, status: primaryStatus };
+};
+
 const logWidgetArtifactStatus = async (): Promise<void> => {
-  const checks = [
-    { label: "widget dist dir", path: WIDGET_DIST_DIR },
-    { label: "widget html", path: WIDGET_HTML_PATH },
-    { label: "widget assets dir", path: WIDGET_ASSET_DIR },
-  ];
   logInfo("widget paths", {
-    distDir: WIDGET_DIST_DIR,
-    htmlPath: WIDGET_HTML_PATH,
-    assetsDir: WIDGET_ASSET_DIR,
+    packaged: PRIMARY_WIDGET_PATHS,
+    fallback: FALLBACK_WIDGET_PATHS,
   });
-  await Promise.all(
-    checks.map(async check => {
-      try {
-        await access(check.path);
-        logInfo(`${check.label} exists`, check.path);
-      } catch (error) {
-        logWarn(`${check.label} missing`, check.path);
-      }
-    })
-  );
+  const [primaryStatus, fallbackStatus] = await Promise.all([
+    checkWidgetPaths(PRIMARY_WIDGET_PATHS),
+    checkWidgetPaths(FALLBACK_WIDGET_PATHS),
+  ]);
+  logInfo("widget paths status", {
+    packaged: primaryStatus,
+    fallback: fallbackStatus,
+  });
+  const selected = await selectWidgetPaths();
+  logInfo("widget paths selected", {
+    source: selected.paths.source,
+    baseDir: selected.paths.baseDir,
+  });
 };
 
 type ParsedWidgetAssets = {
@@ -213,17 +272,20 @@ const parseImportSpecifiers = (spec: string) =>
 
 const buildWidgetHtml = async (): Promise<WidgetHtmlResult> => {
   try {
+    const selection = await selectWidgetPaths();
+    const widgetPaths = selection.paths;
+    logInfo("widget assets source", widgetPaths.source, widgetPaths.baseDir);
     let rawHtml: string;
     try {
-      rawHtml = await readFile(WIDGET_HTML_PATH, "utf-8");
+      rawHtml = await readFile(widgetPaths.htmlPath, "utf-8");
     } catch (error) {
       logError("widget html read failed", {
-        path: WIDGET_HTML_PATH,
+        path: widgetPaths.htmlPath,
         error: formatError(error),
       });
       throw error;
     }
-    logInfo("widget html read:", WIDGET_HTML_PATH, rawHtml.length);
+    logInfo("widget html read:", widgetPaths.htmlPath, rawHtml.length);
     const { cssFiles, jsFiles } = parseWidgetAssets(rawHtml);
     if (cssFiles.length === 0 && jsFiles.length === 0) {
       throw new Error("widget.html did not reference any assets.");
@@ -236,7 +298,7 @@ const buildWidgetHtml = async (): Promise<WidgetHtmlResult> => {
     const cssContents = await Promise.all(
       cssFiles.map(async name => {
         try {
-          return await readFile(resolve(WIDGET_ASSET_DIR, name), "utf-8");
+          return await readFile(resolve(widgetPaths.assetsDir, name), "utf-8");
         } catch (error) {
           logError("widget css read failed", { file: name, error: formatError(error) });
           throw error;
@@ -246,7 +308,7 @@ const buildWidgetHtml = async (): Promise<WidgetHtmlResult> => {
     const jsContents = await Promise.all(
       jsFiles.map(async name => {
         try {
-          return await readFile(resolve(WIDGET_ASSET_DIR, name), "utf-8");
+          return await readFile(resolve(widgetPaths.assetsDir, name), "utf-8");
         } catch (error) {
           logError("widget js read failed", { file: name, error: formatError(error) });
           throw error;
@@ -319,9 +381,21 @@ const buildWidgetHtml = async (): Promise<WidgetHtmlResult> => {
 
     return { html, source: "dist", bytes: Buffer.byteLength(html) };
   } catch (error) {
+    const fallbackDetails = {
+      packaged: {
+        baseDir: PRIMARY_WIDGET_PATHS.baseDir,
+        htmlPath: PRIMARY_WIDGET_PATHS.htmlPath,
+        assetsDir: PRIMARY_WIDGET_PATHS.assetsDir,
+      },
+      fallback: {
+        baseDir: FALLBACK_WIDGET_PATHS.baseDir,
+        htmlPath: FALLBACK_WIDGET_PATHS.htmlPath,
+        assetsDir: FALLBACK_WIDGET_PATHS.assetsDir,
+      },
+    };
     logError("widget build unavailable", {
-      path: WIDGET_ASSET_DIR,
       error: formatError(error),
+      paths: fallbackDetails,
     });
     const html = `<!doctype html>
 <html lang="en">
@@ -331,7 +405,8 @@ const buildWidgetHtml = async (): Promise<WidgetHtmlResult> => {
     <title>OMS Widget</title>
   </head>
   <body>
-    <div>Widget build missing: run npm run build in frontend.</div>
+    <div>Widget build missing: run npm run build at the repo root.</div>
+    <pre>${JSON.stringify(fallbackDetails, null, 2)}</pre>
   </body>
 </html>`;
     return { html, source: "fallback", bytes: Buffer.byteLength(html) };
@@ -357,7 +432,15 @@ const registerWidgetResource = (server: McpServer): void => {
             uri: UI_RESOURCE_URI,
             mimeType: WIDGET_MIME_TYPE,
             text: result.html,
-            _meta: { "openai/widgetPrefersBorder": true },
+            _meta: {
+              "openai/widgetPrefersBorder": true,
+              "openai/widgetDescription": WIDGET_DESCRIPTION,
+              "openai/widgetDomain": WIDGET_DOMAIN,
+              "openai/widgetCSP": {
+                connect_domains: WIDGET_CONNECT_DOMAINS,
+                resource_domains: WIDGET_RESOURCE_DOMAINS,
+              },
+            },
           },
         ],
       };
@@ -365,14 +448,20 @@ const registerWidgetResource = (server: McpServer): void => {
   );
 };
 
-const resolveWidgetAssetPath = (pathname: string): string | null => {
+const resolveWidgetAssetPath = async (pathname: string): Promise<string | null> => {
   if (!pathname.startsWith(WIDGET_ASSET_ROUTE)) return null;
   const relative = pathname.slice(WIDGET_ASSET_ROUTE.length);
   if (!relative) return null;
   const safeRelative = normalize(relative).replace(/^(\.\.[\\/])+/, "");
-  const fullPath = resolve(WIDGET_ASSET_DIR, safeRelative);
-  if (!fullPath.startsWith(WIDGET_ASSET_DIR)) return null;
-  return fullPath;
+  const assetDirs = [PRIMARY_WIDGET_PATHS.assetsDir, FALLBACK_WIDGET_PATHS.assetsDir];
+  for (const baseDir of assetDirs) {
+    const fullPath = resolve(baseDir, safeRelative);
+    if (!fullPath.startsWith(baseDir)) continue;
+    if (await checkPathExists(fullPath)) {
+      return fullPath;
+    }
+  }
+  return null;
 };
 
 const serveWidgetAsset = async (
@@ -380,7 +469,7 @@ const serveWidgetAsset = async (
   res: ServerResponse
 ): Promise<boolean> => {
   logInfo("widget asset requested:", pathname);
-  const assetPath = resolveWidgetAssetPath(pathname);
+  const assetPath = await resolveWidgetAssetPath(pathname);
   if (!assetPath) {
     logWarn("widget asset invalid path:", pathname);
     res.statusCode = 404;

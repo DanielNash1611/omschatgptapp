@@ -23,14 +23,14 @@
 3) Use "No, keep order" to dismiss and return to the inquiry card without cancelling.
 
 ## How to verify widget loads
-1) Build the frontend (`cd frontend && npm run build`) so `frontend/dist` exists.
+1) Build at the repo root (`npm run build`) so `frontend/dist` exists and is copied to `mcp-server/widget-dist`.
 2) Start MCP server (`cd mcp-server && npm run dev`).
 3) Call `get_order_status` for order 1002 and confirm the widget renders instead of plain tool text.
-4) The Skybridge HTML inlines JS/CSS from `frontend/dist/assets` (no external asset fetch required).
+4) The Skybridge HTML inlines JS/CSS from `mcp-server/widget-dist/assets` (no external asset fetch required).
 
 ## Where to see logs
 - MCP server stdout shows widget resource requests and asset path lookups (`[MCP:<id>]` prefix).
-- Startup logs also print widget paths and whether `frontend/dist` artifacts exist.
+- Startup logs also print widget paths and whether packaged widget artifacts exist.
 
 ## Text-only cancellation
 - Use `cancel_order` to initiate, then call `confirm_cancel_order` with the exact phrase `CANCEL <orderId>` if the widget does not render.
@@ -38,7 +38,7 @@
 ## Render build/start (Option A)
 - Build Command: `npm ci && npm run build`
 - Start Command: `npm run start:mcp`
-- Render must build `frontend/dist` so the MCP server can inline the widget bundle at runtime.
+- Render must build `frontend/dist` and copy it into `mcp-server/widget-dist` so the MCP server can inline the widget bundle at runtime.
 
 ## Mock fallback behavior
 - If `get_order_status` fails due to auth or MCP connectivity in dev, the tool bridge can return order 1002 marked as mock.

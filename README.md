@@ -23,13 +23,13 @@ Small, two-tier TypeScript prototype that wires a ChatGPT-style UI to mock OMS t
 - Location: `mcp-server`
 - Stack: TypeScript + `@modelcontextprotocol/sdk`
 - Tools: `get_order_status(orderId: string)`, `cancel_order(orderId: string, confirmationId?: string, typedPhrase?: string)`
-- Widget template URI: `ui://widget/oms-order-v2.html` (served from `frontend/dist` via MCP resource + `http://localhost:8787/widget-assets/`)
-- Quickstart: `cd frontend && npm install && npm run build`, then `cd mcp-server && npm install && npm run dev` (defaults to port 8787)
+- Widget template URI: `ui://widget/oms-order-v2.html` (inlined from `mcp-server/widget-dist`, copied from `frontend/dist`)
+- Quickstart: `npm run build` at repo root, then `cd mcp-server && npm install && npm run dev` (defaults to port 8787)
 
 ## Render (Option A)
 - Build Command: `npm ci && npm run build`
 - Start Command: `npm run start:mcp`
-- Note: Render must build `frontend/dist` so the MCP server can inline the widget bundle at runtime.
+- Note: Render must build `frontend/dist` and copy it to `mcp-server/widget-dist` so the MCP server can inline the widget bundle at runtime.
 
 ## Widget (ChatGPT App UI bundle)
 - Location: `frontend/src/widget.tsx` (entry) with `frontend/widget.html`
