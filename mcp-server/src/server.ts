@@ -32,6 +32,24 @@ const TOOL_WIDGET_TEMPLATE_META = {
   ...TOOL_OUTPUT_TEMPLATE_META,
   ...TOOL_WIDGET_ACCESS_META,
 } as const;
+const TOOL_DEBUG_INFO = [
+  {
+    name: "get_order_status",
+    meta: TOOL_OUTPUT_TEMPLATE_META,
+  },
+  {
+    name: "order_inquiry",
+    meta: TOOL_OUTPUT_TEMPLATE_META,
+  },
+  {
+    name: "cancel_order",
+    meta: TOOL_WIDGET_TEMPLATE_META,
+  },
+  {
+    name: "order_cancel",
+    meta: TOOL_WIDGET_TEMPLATE_META,
+  },
+] as const;
 const WIDGET_ASSET_MIME_TYPES: Record<string, string> = {
   ".css": "text/css",
   ".gif": "image/gif",
@@ -256,10 +274,7 @@ const registerWidgetResource = (server: McpServer): void => {
     async () => {
       console.log("[MCP] UI resource requested:", UI_RESOURCE_URI);
       const result = await buildWidgetHtml();
-      console.log("[MCP] widget html served", {
-        source: result.source,
-        bytes: result.bytes,
-      });
+      console.log("[MCP] widget template bytes:", result.bytes);
       return {
         contents: [
           {
@@ -288,7 +303,7 @@ const serveWidgetAsset = async (
   pathname: string,
   res: ServerResponse
 ): Promise<boolean> => {
-  console.log("[MCP] widget asset request:", pathname);
+  console.log("[MCP] widget asset requested:", pathname);
   const assetPath = resolveWidgetAssetPath(pathname);
   if (!assetPath) {
     console.warn("[MCP] widget asset invalid path:", pathname);
@@ -366,6 +381,15 @@ const createServer = () => {
     },
     async ({ orderId, confirmationId, typedPhrase }) =>
       handleOrderCancel({ orderId, confirmationId, typedPhrase })
+  );
+
+  server.registerTool(
+    "debug_list_tools",
+    {
+      title: "Debug list tools",
+      description: "Return tool metadata for widget rendering diagnostics.",
+    },
+    async () => handleDebugListTools()
   );
 
   return server;
@@ -460,6 +484,18 @@ const buildCancelConfirmUi = (
     errorMessage,
   },
 });
+
+const handleDebugListTools = (): CallToolResult => {
+  const tools = TOOL_DEBUG_INFO.map(tool => ({
+    name: tool.name,
+    outputTemplate: tool.meta["openai/outputTemplate"] ?? null,
+    widgetAccessible: tool.meta["openai/widgetAccessible"] ?? false,
+  }));
+  return {
+    structuredContent: toStructured({ tools }),
+    content: [{ type: "text" as const, text: "Tool metadata listed." }],
+  };
+};
 
 const handleOrderInquiry = async (orderId: string): Promise<CallToolResult> => {
   const order = await getOrderStatus(orderId);
