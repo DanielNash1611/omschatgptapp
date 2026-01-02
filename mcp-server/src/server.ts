@@ -15,6 +15,8 @@ const PATH = "/mcp";
 const PORT = Number(process.env.PORT ?? "8787");
 const HOST = "0.0.0.0";
 const CONFIRMATION_TTL_MS = 10 * 60 * 1000;
+const INSTANCE_ID = process.env.RENDER_INSTANCE_ID ?? randomUUID().slice(0, 8);
+const LOG_PREFIX = `[MCP:${INSTANCE_ID}]`;
 const UI_RESOURCE_URI = "ui://widget/oms-order-v2.html";
 const WIDGET_MIME_TYPE = "text/html+skybridge";
 const WIDGET_ASSET_ROUTE = "/widget-assets/";
@@ -29,6 +31,7 @@ type OpenAIToolMeta = {
   "openai/widgetCSP"?: unknown;
 };
 
+const TOOL_DEBUG_META = {} satisfies OpenAIToolMeta;
 const TOOL_OUTPUT_TEMPLATE_META = {
   "openai/outputTemplate": UI_RESOURCE_URI,
 } satisfies OpenAIToolMeta;
@@ -55,6 +58,18 @@ const TOOL_DEBUG_INFO = [
   {
     name: "order_cancel",
     meta: TOOL_OUTPUT_AND_ACCESS_META,
+  },
+  {
+    name: "confirm_cancel_order",
+    meta: TOOL_OUTPUT_TEMPLATE_META,
+  },
+  {
+    name: "debug_list_tools",
+    meta: TOOL_DEBUG_META,
+  },
+  {
+    name: "debug_list_tools_meta",
+    meta: TOOL_DEBUG_META,
   },
 ] as const satisfies ReadonlyArray<{ name: string; meta: OpenAIToolMeta }>;
 const WIDGET_ASSET_MIME_TYPES: Record<string, string> = {
@@ -96,6 +111,10 @@ const cancelOrderParams = {
 };
 const orderIdSchema = z.object(orderIdParam);
 const cancelOrderSchema = z.object(cancelOrderParams);
+const confirmCancelSchema = z.object({
+  orderId: z.string().min(1, "orderId is required"),
+  typedPhrase: z.string().min(1, "typedPhrase is required"),
+});
 
 const pendingConfirmations: Record<string, { orderId: string; expiresAt: number }> = {};
 
@@ -104,6 +123,21 @@ type WidgetHtmlResult = {
   source: "dist" | "fallback";
   bytes: number;
 };
+
+const logInfo = (...args: unknown[]) => {
+  console.log(LOG_PREFIX, ...args);
+};
+
+const logWarn = (...args: unknown[]) => {
+  console.warn(LOG_PREFIX, ...args);
+};
+
+const logError = (...args: unknown[]) => {
+  console.error(LOG_PREFIX, ...args);
+};
+
+const formatError = (error: unknown): string =>
+  error instanceof Error ? error.stack ?? error.message : String(error);
 
 type ParsedWidgetAssets = {
   cssFiles: string[];
@@ -148,13 +182,13 @@ const buildWidgetHtml = async (): Promise<WidgetHtmlResult> => {
     try {
       rawHtml = await readFile(WIDGET_HTML_PATH, "utf-8");
     } catch (error) {
-      console.error("[MCP] widget html read failed", {
+      logError("widget html read failed", {
         path: WIDGET_HTML_PATH,
-        error: String(error),
+        error: formatError(error),
       });
       throw error;
     }
-    console.log("[MCP] widget html read:", WIDGET_HTML_PATH, rawHtml.length);
+    logInfo("widget html read:", WIDGET_HTML_PATH, rawHtml.length);
     const { cssFiles, jsFiles } = parseWidgetAssets(rawHtml);
     if (cssFiles.length === 0 && jsFiles.length === 0) {
       throw new Error("widget.html did not reference any assets.");
@@ -169,7 +203,7 @@ const buildWidgetHtml = async (): Promise<WidgetHtmlResult> => {
         try {
           return await readFile(resolve(WIDGET_ASSET_DIR, name), "utf-8");
         } catch (error) {
-          console.error("[MCP] widget css read failed", { file: name, error: String(error) });
+          logError("widget css read failed", { file: name, error: formatError(error) });
           throw error;
         }
       })
@@ -179,7 +213,7 @@ const buildWidgetHtml = async (): Promise<WidgetHtmlResult> => {
         try {
           return await readFile(resolve(WIDGET_ASSET_DIR, name), "utf-8");
         } catch (error) {
-          console.error("[MCP] widget js read failed", { file: name, error: String(error) });
+          logError("widget js read failed", { file: name, error: formatError(error) });
           throw error;
         }
       })
@@ -250,9 +284,9 @@ const buildWidgetHtml = async (): Promise<WidgetHtmlResult> => {
 
     return { html, source: "dist", bytes: Buffer.byteLength(html) };
   } catch (error) {
-    console.error("[MCP] widget build unavailable", {
+    logError("widget build unavailable", {
       path: WIDGET_ASSET_DIR,
-      error: String(error),
+      error: formatError(error),
     });
     const html = `<!doctype html>
 <html lang="en">
@@ -279,9 +313,9 @@ const registerWidgetResource = (server: McpServer): void => {
       description: "OMS order widget template for ChatGPT Apps.",
     },
     async () => {
-      console.log("[MCP] UI resource requested:", UI_RESOURCE_URI);
+      logInfo("UI resource requested:", UI_RESOURCE_URI);
       const result = await buildWidgetHtml();
-      console.log("[MCP] widget template bytes:", result.bytes);
+      logInfo("UI resource bytes:", result.bytes);
       return {
         contents: [
           {
@@ -310,10 +344,10 @@ const serveWidgetAsset = async (
   pathname: string,
   res: ServerResponse
 ): Promise<boolean> => {
-  console.log("[MCP] widget asset requested:", pathname);
+  logInfo("widget asset requested:", pathname);
   const assetPath = resolveWidgetAssetPath(pathname);
   if (!assetPath) {
-    console.warn("[MCP] widget asset invalid path:", pathname);
+    logWarn("widget asset invalid path:", pathname);
     res.statusCode = 404;
     res.end();
     return true;
@@ -328,9 +362,9 @@ const serveWidgetAsset = async (
     );
     res.setHeader("Content-Length", data.length);
     res.end(data);
-    console.log("[MCP] widget asset served:", pathname, data.length);
+    logInfo("widget asset served:", pathname, data.length);
   } catch (error) {
-    console.warn("[MCP] widget asset 404:", pathname);
+    logWarn("widget asset 404:", pathname);
     res.statusCode = 404;
     res.end();
   }
@@ -344,7 +378,7 @@ const createServer = () => {
   });
 
   registerWidgetResource(server);
-  console.log("[MCP] widget resource registered:", UI_RESOURCE_URI, WIDGET_MIME_TYPE);
+  logInfo("widget resource registered:", UI_RESOURCE_URI, WIDGET_MIME_TYPE);
 
   server.registerTool(
     "get_order_status",
@@ -391,10 +425,30 @@ const createServer = () => {
   );
 
   server.registerTool(
+    "confirm_cancel_order",
+    {
+      title: "Confirm cancel order",
+      description: "Finalize a pending OMS order cancellation after phrase confirmation.",
+      inputSchema: confirmCancelSchema,
+      _meta: TOOL_OUTPUT_TEMPLATE_META,
+    },
+    async ({ orderId, typedPhrase }) => handleConfirmCancelOrder({ orderId, typedPhrase })
+  );
+
+  server.registerTool(
     "debug_list_tools",
     {
       title: "Debug list tools",
       description: "Return tool metadata for widget rendering diagnostics.",
+    },
+    async () => handleDebugListTools()
+  );
+  server.registerTool(
+    "debug_list_tools_meta",
+    {
+      title: "Debug list tools meta",
+      description: "Return tool metadata used for widget rendering diagnostics.",
+      inputSchema: z.object({}),
     },
     async () => handleDebugListTools()
   );
@@ -492,6 +546,11 @@ const buildCancelConfirmUi = (
   },
 });
 
+type ConfirmCancelArgs = {
+  orderId: string;
+  typedPhrase: string;
+};
+
 const handleDebugListTools = (): CallToolResult => {
   const tools = TOOL_DEBUG_INFO.map(tool => {
     const meta: OpenAIToolMeta = tool.meta;
@@ -504,6 +563,101 @@ const handleDebugListTools = (): CallToolResult => {
   return {
     structuredContent: toStructured({ tools }),
     content: [{ type: "text" as const, text: "Tool metadata listed." }],
+  };
+};
+
+const handleConfirmCancelOrder = async ({
+  orderId,
+  typedPhrase,
+}: ConfirmCancelArgs): Promise<CallToolResult> => {
+  const order = await getOrderStatus(orderId);
+  if (!order) {
+    const text = `Order ${orderId} was not found; nothing was cancelled.`;
+    const stub = buildOrderStub(orderId);
+    return {
+      structuredContent: toStructured({
+        orderId,
+        success: false,
+        reason: "ORDER_NOT_FOUND",
+      }),
+      content: [{ type: "text" as const, text }],
+      _meta: { order: stub },
+      ui: buildOrderInquiryUi(stub),
+      isError: true,
+    };
+  }
+
+  const requiredPhrase = requiredPhraseFor(orderId);
+  const confirmation = pendingConfirmations[orderId];
+  const now = Date.now();
+
+  if (!confirmation || confirmation.expiresAt < now) {
+    const text = "Cancellation confirmation expired. Start again to cancel.";
+    if (confirmation) {
+      delete pendingConfirmations[orderId];
+    }
+    return {
+      structuredContent: toStructured({
+        orderId,
+        success: false,
+        reason: "CONFIRMATION_EXPIRED",
+        status: order.status,
+      }),
+      content: [{ type: "text" as const, text }],
+      _meta: { order },
+      ui: buildCancelConfirmUi(
+        order,
+        orderId,
+        new Date(now + CONFIRMATION_TTL_MS).toISOString(),
+        requiredPhrase,
+        text
+      ),
+      isError: true,
+    };
+  }
+
+  if (typedPhrase !== requiredPhrase) {
+    const text = `Type the exact phrase "${requiredPhrase}" to confirm cancellation.`;
+    return {
+      structuredContent: toStructured({
+        orderId,
+        success: false,
+        reason: "INVALID_PHRASE",
+        status: order.status,
+        requiredPhrase,
+      }),
+      content: [{ type: "text" as const, text }],
+      _meta: { order },
+      ui: buildCancelConfirmUi(
+        order,
+        orderId,
+        new Date(confirmation.expiresAt).toISOString(),
+        requiredPhrase,
+        text
+      ),
+      isError: true,
+    };
+  }
+
+  const result = await cancelOrder(orderId);
+  delete pendingConfirmations[orderId];
+  const updatedOrder = (await getOrderStatus(orderId)) ?? order;
+  const text = result.success
+    ? `Order ${orderId} has been cancelled.`
+    : describeCancelFailure(orderId, result);
+
+  return {
+    structuredContent: toStructured({
+      orderId,
+      success: result.success,
+      status: updatedOrder.status,
+      cancelledAt: result.cancelledAt,
+      order: buildOrderSummary(updatedOrder),
+    }),
+    content: [{ type: "text" as const, text }],
+    _meta: { order: updatedOrder },
+    ui: buildOrderInquiryUi(updatedOrder),
+    isError: !result.success,
   };
 };
 
@@ -595,7 +749,7 @@ const handleOrderCancel = async ({
     const expiresAtMs = now + CONFIRMATION_TTL_MS;
     pendingConfirmations[confirmationKey] = { orderId, expiresAt: expiresAtMs };
     const expiresAt = new Date(expiresAtMs).toISOString();
-    const text = `Confirm cancellation by typing "${requiredPhrase}" before proceeding.`;
+    const text = `Reply with "${requiredPhrase}" to confirm cancellation.`;
     return {
       structuredContent: toStructured({
         orderId,
@@ -862,6 +1016,7 @@ const server = createHttpServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host ?? `${HOST}:${PORT}`}`);
 
   if ((req.method === "GET" || req.method === "HEAD") && url.pathname.startsWith(WIDGET_ASSET_ROUTE)) {
+    logInfo("widget asset requested:", req.url ?? url.pathname);
     const served = await serveWidgetAsset(url.pathname, res);
     if (served) {
       return;
@@ -882,7 +1037,7 @@ const server = createHttpServer(async (req, res) => {
   try {
     await handleMcpRequest(req, res);
   } catch (error) {
-    console.error("MCP server connection error:", error);
+    logError("MCP server connection error:", formatError(error));
     if (!res.headersSent) {
       sendJson(res, 500, { error: "Internal server error" });
     }
@@ -890,6 +1045,6 @@ const server = createHttpServer(async (req, res) => {
 });
 
 server.listen(PORT, HOST, () => {
-  console.log(`OMS MCP server listening on http://${HOST}:${PORT}${PATH}`);
-  console.log("[MCP] tool output template:", TOOL_OUTPUT_TEMPLATE_META);
+  logInfo(`OMS MCP server listening on http://${HOST}:${PORT}${PATH}`);
+  logInfo("tool output template:", TOOL_OUTPUT_TEMPLATE_META);
 });

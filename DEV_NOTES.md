@@ -29,7 +29,10 @@
 4) The Skybridge HTML inlines JS/CSS from `frontend/dist/assets` (no external asset fetch required).
 
 ## Where to see logs
-- MCP server stdout shows widget resource requests and asset path lookups (`[MCP]` prefix).
+- MCP server stdout shows widget resource requests and asset path lookups (`[MCP:<id>]` prefix).
+
+## Text-only cancellation
+- Use `cancel_order` to initiate, then call `confirm_cancel_order` with the exact phrase `CANCEL <orderId>` if the widget does not render.
 
 ## Mock fallback behavior
 - If `get_order_status` fails due to auth or MCP connectivity in dev, the tool bridge can return order 1002 marked as mock.
