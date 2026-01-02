@@ -129,6 +129,7 @@ const buildWidgetHtml = async (): Promise<WidgetHtmlResult> => {
       });
       throw error;
     }
+    console.log("[MCP] widget html read:", WIDGET_HTML_PATH, rawHtml.length);
     const { cssFiles, jsFiles } = parseWidgetAssets(rawHtml);
     if (cssFiles.length === 0 && jsFiles.length === 0) {
       throw new Error("widget.html did not reference any assets.");
@@ -394,6 +395,25 @@ const formatDateTime = (value?: string | null): string | null => {
 const itemCount = (order?: Order | null): number =>
   order?.items?.reduce((sum, item) => sum + (item.quantity ?? 0), 0) ?? 0;
 
+const buildOrderSummary = (order: Order): Record<string, unknown> => ({
+  orderId: order.orderId,
+  status: order.status,
+  canCancel: order.canCancel,
+  eta: order.eta,
+  carrier: order.carrier,
+  trackingNumber: order.trackingNumber,
+  placedAt: order.placedAt ?? null,
+  shippingMethod: order.shippingMethod ?? null,
+  totals: order.totals
+    ? {
+        total: order.totals.total ?? null,
+        currency: order.totals.currency ?? "USD",
+      }
+    : null,
+  itemCount: itemCount(order),
+  cancelledAt: order.cancelledAt ?? null,
+});
+
 const buildOrderStub = (orderId: string): Order => ({
   orderId,
   status: "NOT_FOUND",
@@ -448,16 +468,21 @@ const handleOrderInquiry = async (orderId: string): Promise<CallToolResult> => {
     const text = `Order ${orderId} was not found in the OMS.`;
     const stub = buildOrderStub(orderId);
     return {
-      structuredContent: toStructured({ orderId, status: "NOT_FOUND" }),
+      structuredContent: toStructured({
+        orderId,
+        status: "NOT_FOUND",
+      }),
       content: [{ type: "text" as const, text }],
+      _meta: { order: stub },
       ui: buildOrderInquiryUi(stub),
       isError: true,
     };
   }
 
   return {
-    structuredContent: toStructured({ order }),
+    structuredContent: toStructured({ order: buildOrderSummary(order) }),
     content: [{ type: "text" as const, text: summarizeOrder(order) }],
+    _meta: { order },
     ui: buildOrderInquiryUi(order),
   };
 };
@@ -476,10 +501,16 @@ const handleOrderCancel = async ({
   const order = await getOrderStatus(orderId);
   if (!order) {
     const text = `Order ${orderId} was not found; nothing was cancelled.`;
+    const stub = buildOrderStub(orderId);
     return {
-      structuredContent: toStructured({ orderId, success: false, reason: "ORDER_NOT_FOUND" }),
+      structuredContent: toStructured({
+        orderId,
+        success: false,
+        reason: "ORDER_NOT_FOUND",
+      }),
       content: [{ type: "text" as const, text }],
-      ui: buildOrderInquiryUi(buildOrderStub(orderId)),
+      _meta: { order: stub },
+      ui: buildOrderInquiryUi(stub),
       isError: true,
     };
   }
@@ -506,9 +537,10 @@ const handleOrderCancel = async ({
           success: false,
           reason: "NOT_CANCELLABLE",
           status: order.status,
-          order,
+          order: buildOrderSummary(order),
         }),
         content: [{ type: "text" as const, text }],
+        _meta: { order },
         ui: buildOrderInquiryUi(order),
         isError: true,
       };
@@ -526,9 +558,10 @@ const handleOrderCancel = async ({
         confirmationExpiresAt: expiresAt,
         requiredPhrase,
         reason: "CONFIRMATION_REQUIRED",
-        order,
+        order: buildOrderSummary(order),
       }),
       content: [{ type: "text" as const, text }],
+      _meta: { order },
       ui: buildCancelConfirmUi(order, confirmationKey, expiresAt, requiredPhrase),
     };
   }
@@ -543,6 +576,7 @@ const handleOrderCancel = async ({
         status: order.status,
       }),
       content: [{ type: "text" as const, text }],
+      _meta: { order },
       ui: buildCancelConfirmUi(
         order,
         confirmationKey,
@@ -568,6 +602,7 @@ const handleOrderCancel = async ({
         status: order.status,
       }),
       content: [{ type: "text" as const, text }],
+      _meta: { order },
       ui: buildCancelConfirmUi(
         order,
         confirmationKey,
@@ -590,6 +625,7 @@ const handleOrderCancel = async ({
         requiredPhrase,
       }),
       content: [{ type: "text" as const, text }],
+      _meta: { order },
       ui: buildCancelConfirmUi(
         order,
         confirmationKey,
@@ -605,7 +641,14 @@ const handleOrderCancel = async ({
   delete pendingConfirmations[confirmationKey];
   const updatedOrder = (await getOrderStatus(orderId)) ?? order;
 
-  const structuredContent = toStructured({ orderId, ...result, order: updatedOrder });
+  const structuredContent = toStructured({
+    orderId,
+    success: result.success,
+    status: updatedOrder.status,
+    reason: result.reason,
+    cancelledAt: result.cancelledAt,
+    order: buildOrderSummary(updatedOrder),
+  });
   const text = result.success
     ? describeCancelled(orderId, result)
     : describeCancelFailure(orderId, result);
@@ -613,6 +656,7 @@ const handleOrderCancel = async ({
   return {
     structuredContent,
     content: [{ type: "text" as const, text }],
+    _meta: { order: updatedOrder },
     ui: buildOrderInquiryUi(updatedOrder),
     isError: !result.success,
   };
