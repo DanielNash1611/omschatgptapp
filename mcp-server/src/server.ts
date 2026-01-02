@@ -1,6 +1,9 @@
 import { createServer as createHttpServer } from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import { dirname, extname, normalize, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
@@ -12,6 +15,39 @@ const PATH = "/mcp";
 const PORT = Number(process.env.PORT ?? "8787");
 const HOST = "0.0.0.0";
 const CONFIRMATION_TTL_MS = 10 * 60 * 1000;
+const UI_RESOURCE_URI = "ui://widget/oms-order-v2.html";
+const WIDGET_MIME_TYPE = "text/html+skybridge";
+const WIDGET_ASSET_ROUTE = "/widget-assets/";
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+const WIDGET_DIST_DIR = resolve(REPO_ROOT, "frontend", "dist");
+const WIDGET_ASSET_DIR = resolve(WIDGET_DIST_DIR, "assets");
+const WIDGET_HTML_PATH = resolve(WIDGET_DIST_DIR, "widget.html");
+const ensureTrailingSlash = (value: string): string =>
+  value.endsWith("/") ? value : `${value}/`;
+const WIDGET_ASSET_BASE_URL = ensureTrailingSlash(
+  process.env.OMS_WIDGET_ASSET_BASE_URL ??
+    `http://localhost:${PORT}${WIDGET_ASSET_ROUTE}`
+);
+const TOOL_OUTPUT_TEMPLATE_META = {
+  "openai/outputTemplate": UI_RESOURCE_URI,
+} as const;
+const TOOL_WIDGET_ACCESS_META = {
+  "openai/outputTemplate": UI_RESOURCE_URI,
+  "openai/widgetAccessible": true,
+} as const;
+const WIDGET_ASSET_MIME_TYPES: Record<string, string> = {
+  ".css": "text/css",
+  ".gif": "image/gif",
+  ".jpeg": "image/jpeg",
+  ".jpg": "image/jpeg",
+  ".js": "application/javascript",
+  ".json": "application/json",
+  ".map": "application/json",
+  ".mjs": "application/javascript",
+  ".png": "image/png",
+  ".svg": "image/svg+xml",
+  ".webp": "image/webp",
+};
 
 const orderIdParam = {
   orderId: z
@@ -34,8 +70,90 @@ const cancelOrderParams = {
     .optional()
     .describe("User-entered phrase matching `CANCEL <orderId>` required to finalize cancellation."),
 };
+const orderIdSchema = z.object(orderIdParam);
+const cancelOrderSchema = z.object(cancelOrderParams);
 
 const pendingConfirmations: Record<string, { orderId: string; expiresAt: number }> = {};
+
+const buildWidgetHtml = async (): Promise<string> => {
+  try {
+    const raw = await readFile(WIDGET_HTML_PATH, "utf-8");
+    return raw.replace(/(src|href)=["']\/assets\//g, `$1="${WIDGET_ASSET_BASE_URL}`);
+  } catch (error) {
+    console.warn("[mcp] widget html unavailable", {
+      path: WIDGET_HTML_PATH,
+      error: String(error),
+    });
+    return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>OMS Widget</title>
+  </head>
+  <body>
+    <div>Widget bundle not found. Build the frontend or set OMS_WIDGET_ASSET_BASE_URL.</div>
+  </body>
+</html>`;
+  }
+};
+
+const registerWidgetResource = (server: McpServer): void => {
+  server.registerResource(
+    "oms_order_widget",
+    UI_RESOURCE_URI,
+    {
+      title: "OMS Order Widget",
+      mimeType: WIDGET_MIME_TYPE,
+      description: "OMS order widget template for ChatGPT Apps.",
+    },
+    async () => {
+      const html = await buildWidgetHtml();
+      return {
+        contents: [
+          {
+            uri: UI_RESOURCE_URI,
+            mimeType: WIDGET_MIME_TYPE,
+            text: html,
+          },
+        ],
+      };
+    }
+  );
+};
+
+const resolveWidgetAssetPath = (pathname: string): string | null => {
+  if (!pathname.startsWith(WIDGET_ASSET_ROUTE)) return null;
+  const relative = pathname.slice(WIDGET_ASSET_ROUTE.length);
+  if (!relative) return null;
+  const safeRelative = normalize(relative).replace(/^(\.\.[\\/])+/, "");
+  const fullPath = resolve(WIDGET_ASSET_DIR, safeRelative);
+  if (!fullPath.startsWith(WIDGET_ASSET_DIR)) return null;
+  return fullPath;
+};
+
+const serveWidgetAsset = async (
+  pathname: string,
+  res: ServerResponse
+): Promise<boolean> => {
+  const assetPath = resolveWidgetAssetPath(pathname);
+  if (!assetPath) return false;
+  try {
+    const data = await readFile(assetPath);
+    const ext = extname(assetPath).toLowerCase();
+    res.statusCode = 200;
+    res.setHeader(
+      "Content-Type",
+      WIDGET_ASSET_MIME_TYPES[ext] ?? "application/octet-stream"
+    );
+    res.setHeader("Content-Length", data.length);
+    res.end(data);
+  } catch (error) {
+    res.statusCode = 404;
+    res.end();
+  }
+  return true;
+};
 
 const createServer = () => {
   const server = new McpServer({
@@ -43,20 +161,48 @@ const createServer = () => {
     version: "0.1.0",
   });
 
-  server.tool("get_order_status", orderIdParam, async ({ orderId }) =>
-    handleOrderInquiry(orderId)
-  );
-  server.tool("order_inquiry", orderIdParam, async ({ orderId }) => handleOrderInquiry(orderId));
+  registerWidgetResource(server);
 
-  server.tool(
+  server.registerTool(
+    "get_order_status",
+    {
+      title: "Get order status",
+      description: "Look up the status and details for an OMS order.",
+      inputSchema: orderIdSchema,
+      _meta: TOOL_OUTPUT_TEMPLATE_META,
+    },
+    async ({ orderId }) => handleOrderInquiry(orderId)
+  );
+  server.registerTool(
+    "order_inquiry",
+    {
+      title: "Order inquiry",
+      description: "Alias for get_order_status.",
+      inputSchema: orderIdSchema,
+      _meta: TOOL_OUTPUT_TEMPLATE_META,
+    },
+    async ({ orderId }) => handleOrderInquiry(orderId)
+  );
+
+  server.registerTool(
     "cancel_order",
-    cancelOrderParams,
+    {
+      title: "Cancel order",
+      description: "Request or confirm an OMS order cancellation.",
+      inputSchema: cancelOrderSchema,
+      _meta: TOOL_WIDGET_ACCESS_META,
+    },
     async ({ orderId, confirmationId, typedPhrase }) =>
       handleOrderCancel({ orderId, confirmationId, typedPhrase })
   );
-  server.tool(
+  server.registerTool(
     "order_cancel",
-    cancelOrderParams,
+    {
+      title: "Order cancel",
+      description: "Alias for cancel_order.",
+      inputSchema: cancelOrderSchema,
+      _meta: TOOL_OUTPUT_TEMPLATE_META,
+    },
     async ({ orderId, confirmationId, typedPhrase }) =>
       handleOrderCancel({ orderId, confirmationId, typedPhrase })
   );
@@ -212,7 +358,6 @@ const handleOrderCancel = async ({
     pendingConfirmations[confirmationKey] = { orderId, expiresAt: expiresAtMs };
     const expiresAt = new Date(expiresAtMs).toISOString();
     const text = `Confirm cancellation by typing "${requiredPhrase}" before proceeding.`;
-
     return {
       structuredContent: toStructured({
         orderId,
@@ -285,7 +430,13 @@ const handleOrderCancel = async ({
         requiredPhrase,
       }),
       content: [{ type: "text" as const, text }],
-      ui: buildCancelConfirmUi(order, confirmationKey, new Date(confirmation.expiresAt).toISOString(), requiredPhrase, text),
+      ui: buildCancelConfirmUi(
+        order,
+        confirmationKey,
+        new Date(confirmation.expiresAt).toISOString(),
+        requiredPhrase,
+        text
+      ),
       isError: true,
     };
   }
@@ -459,6 +610,13 @@ const server = createHttpServer(async (req, res) => {
   }
 
   const url = new URL(req.url, `http://${req.headers.host ?? `${HOST}:${PORT}`}`);
+
+  if ((req.method === "GET" || req.method === "HEAD") && url.pathname.startsWith(WIDGET_ASSET_ROUTE)) {
+    const served = await serveWidgetAsset(url.pathname, res);
+    if (served) {
+      return;
+    }
+  }
 
   if (req.method === "GET" && url.pathname === "/healthz") {
     sendJson(res, 200, { ok: true });

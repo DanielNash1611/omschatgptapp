@@ -9,9 +9,10 @@ import cors from "cors";
 import type { CorsOptions } from "cors";
 import dotenv from "dotenv";
 import express from "express";
+import { randomUUID } from "node:crypto";
 import { ChatCompletionMessageParam } from "openai/resources/chat/completions";
 import { callAssistant } from "./openaiClient";
-import { cancelOrder, getOrderStatus } from "./omsClient";
+import { cancelOrder, getOrderStatus, mockOrders } from "./omsClient";
 import { SYSTEM_PROMPT } from "./prompts";
 import { Order } from "./types";
 
@@ -19,6 +20,25 @@ dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3001;
+const MCP_URL = process.env.OMS_MCP_URL ?? "http://localhost:3002/mcp";
+const DEV_DIAGNOSTICS =
+  process.env.NODE_ENV !== "production" ||
+  process.env.OMS_PROTOTYPE_DEV_DIAGNOSTICS === "true";
+const ALLOW_MOCK_FALLBACK =
+  process.env.NODE_ENV !== "production" ||
+  process.env.OMS_PROTOTYPE_ALLOW_MOCK_FALLBACK === "true";
+const AUTH_MODE = process.env.OMS_TOOL_AUTH_MODE ?? "none";
+const AUTH_HEADER = (process.env.OMS_TOOL_AUTH_HEADER ?? "authorization").toLowerCase();
+const AUTH_REQUIRED = process.env.OMS_TOOL_REQUIRE_AUTH === "true";
+const TOOL_SCHEMAS = {
+  get_order_status: {
+    type: "object",
+    properties: {
+      orderId: { type: "string", minLength: 1 }
+    },
+    required: ["orderId"]
+  }
+} as const;
 
 const allowedOrigins = [
   "http://localhost:5173",
@@ -43,6 +63,72 @@ app.use(cors(corsOptions));
 app.options("*", cors(corsOptions));
 app.use(express.json());
 
+const logDiagnostic = (...args: unknown[]) => {
+  if (DEV_DIAGNOSTICS) {
+    console.log(...args);
+  }
+};
+
+type ToolError = {
+  code: string;
+  message: string;
+  details?: unknown;
+  nextActions?: string[];
+};
+
+const buildToolError = (code: string, message: string, details?: unknown): ToolError => ({
+  code,
+  message,
+  details,
+  nextActions: [
+    "Verify the tool is registered in the app manifest or Actions config",
+    "Restart the MCP server and backend",
+    "Check OMS tool auth headers and tokens",
+    "Confirm the request payload matches the schema (orderId string)"
+  ]
+});
+
+const parseJwtExpiry = (token: string): number | null => {
+  const parts = token.split(".");
+  if (parts.length < 2) return null;
+  try {
+    const base64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), "=");
+    const payload = JSON.parse(Buffer.from(padded, "base64").toString("utf-8"));
+    return typeof payload?.exp === "number" ? payload.exp * 1000 : null;
+  } catch {
+    return null;
+  }
+};
+
+const getAuthDiagnostics = (req: express.Request) => {
+  const headerValue = req.get(AUTH_HEADER) ?? "";
+  const token = headerValue.startsWith("Bearer ")
+    ? headerValue.slice("Bearer ".length)
+    : headerValue;
+  const expiry = token ? parseJwtExpiry(token) : null;
+  return {
+    headerPresent: Boolean(headerValue),
+    mode: AUTH_MODE,
+    expiry
+  };
+};
+
+const getMockFallback = (reason: string, requestId: string, originalOrderId: string) => {
+  const fallbackOrder = mockOrders.find(order => order.orderId === "1002") ?? null;
+  if (!fallbackOrder) return null;
+  return {
+    ...fallbackOrder,
+    meta: {
+      source: "mock_fallback",
+      reason,
+      requestId,
+      originalOrderId
+    },
+    warning: `Mock fallback used due to ${reason}.`
+  };
+};
+
 app.get("/health", (_req, res) => {
   res.json({ status: "ok" });
 });
@@ -52,10 +138,54 @@ app.get("/healthz", (_req, res) => {
 });
 
 app.post("/api/tools/get_order_status", async (req, res) => {
+  const requestId = randomUUID();
+  res.setHeader("x-request-id", requestId);
   const orderId = typeof req.body?.orderId === "string" ? req.body.orderId.trim() : "";
+  const authInfo = getAuthDiagnostics(req);
+
+  logDiagnostic("[tools] get_order_status request", {
+    requestId,
+    orderId,
+    authMode: authInfo.mode,
+    authHeaderPresent: authInfo.headerPresent,
+    authExpiry: authInfo.expiry,
+    origin: req.get("origin"),
+    userAgent: req.get("user-agent")
+  });
 
   if (!orderId) {
-    return res.status(400).json({ error: "orderId is required" });
+    const error = buildToolError("SCHEMA_MISMATCH", "orderId is required");
+    logDiagnostic("[tools] get_order_status schema mismatch", { requestId, error });
+    return res.status(400).json({ error, requestId });
+  }
+
+  if (AUTH_REQUIRED && !authInfo.headerPresent) {
+    const error = buildToolError(
+      "AUTH_REQUIRED",
+      "Connect/reauth OMS to use this tool."
+    );
+    logDiagnostic("[tools] get_order_status auth missing", { requestId, error });
+    if (ALLOW_MOCK_FALLBACK) {
+      const fallback = getMockFallback(error.code, requestId, orderId);
+      if (fallback) {
+        res.setHeader("x-oms-mock-fallback", "true");
+        return res.status(200).json(fallback);
+      }
+    }
+    return res.status(401).json({ error, requestId });
+  }
+
+  if (AUTH_REQUIRED && authInfo.expiry && authInfo.expiry < Date.now()) {
+    const error = buildToolError("AUTH_EXPIRED", "OMS auth token expired.");
+    logDiagnostic("[tools] get_order_status auth expired", { requestId, error });
+    if (ALLOW_MOCK_FALLBACK) {
+      const fallback = getMockFallback(error.code, requestId, orderId);
+      if (fallback) {
+        res.setHeader("x-oms-mock-fallback", "true");
+        return res.status(200).json(fallback);
+      }
+    }
+    return res.status(401).json({ error, requestId });
   }
 
   const rpcPayload = {
@@ -69,44 +199,111 @@ app.post("/api/tools/get_order_status", async (req, res) => {
   };
 
   try {
-    const mcpResponse = await fetch("http://localhost:3002/mcp", {
+    const mcpResponse = await fetch(MCP_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(rpcPayload)
     });
 
     if (!mcpResponse.ok) {
-      return res
-        .status(502)
-        .json({ error: "Failed to reach OMS tool bridge", status: mcpResponse.status });
+      const error = buildToolError("MCP_BAD_STATUS", "MCP bridge returned an error.", {
+        status: mcpResponse.status
+      });
+      logDiagnostic("[tools] get_order_status MCP bad status", { requestId, error });
+      if (ALLOW_MOCK_FALLBACK) {
+        const fallback = getMockFallback(error.code, requestId, orderId);
+        if (fallback) {
+          res.setHeader("x-oms-mock-fallback", "true");
+          return res.status(200).json(fallback);
+        }
+      }
+      return res.status(502).json({ error, requestId });
     }
 
-    const rpcJson = await mcpResponse.json();
+    let rpcJson: Record<string, unknown> | null = null;
+    try {
+      rpcJson = (await mcpResponse.json()) as Record<string, unknown>;
+    } catch (parseError) {
+      const error = buildToolError("MCP_BAD_RESPONSE", "Failed to parse MCP response.", parseError);
+      logDiagnostic("[tools] get_order_status MCP parse error", { requestId, error });
+      if (ALLOW_MOCK_FALLBACK) {
+        const fallback = getMockFallback(error.code, requestId, orderId);
+        if (fallback) {
+          res.setHeader("x-oms-mock-fallback", "true");
+          return res.status(200).json(fallback);
+        }
+      }
+      return res.status(502).json({ error, requestId });
+    }
 
     if (rpcJson?.error) {
-      return res
-        .status(500)
-        .json({ error: "MCP tool error", details: rpcJson.error });
+      const rawMessage = (rpcJson.error as { message?: string })?.message;
+      const message = typeof rawMessage === "string" ? rawMessage : "MCP tool error";
+      const code = message.toLowerCase().includes("tool not found")
+        ? "TOOL_NOT_REGISTERED"
+        : "MCP_TOOL_ERROR";
+      const error = buildToolError(code, message, rpcJson.error);
+      logDiagnostic("[tools] get_order_status MCP tool error", { requestId, error });
+      if (ALLOW_MOCK_FALLBACK) {
+        const fallback = getMockFallback(error.code, requestId, orderId);
+        if (fallback) {
+          res.setHeader("x-oms-mock-fallback", "true");
+          return res.status(200).json(fallback);
+        }
+      }
+      return res.status(500).json({ error, requestId });
     }
 
-    const content = rpcJson?.result?.content ?? {};
+    const result = rpcJson?.result as Record<string, unknown> | undefined;
+    const content =
+      (result?.content as Record<string, unknown> | undefined) ??
+      (result?.structuredContent as Record<string, unknown> | undefined) ??
+      {};
+    if (!content || typeof content !== "object") {
+      const error = buildToolError("SCHEMA_MISMATCH", "Unexpected MCP response shape.", rpcJson);
+      logDiagnostic("[tools] get_order_status schema mismatch", { requestId, error });
+      if (ALLOW_MOCK_FALLBACK) {
+        const fallback = getMockFallback(error.code, requestId, orderId);
+        if (fallback) {
+          res.setHeader("x-oms-mock-fallback", "true");
+          return res.status(200).json(fallback);
+        }
+      }
+      return res.status(502).json({ error, requestId });
+    }
 
     const clean: Order = {
-      orderId: content.orderId ?? orderId,
-      status: content.status ?? "UNKNOWN",
-      eta: content.eta ?? null,
-      carrier: content.carrier ?? null,
-      trackingNumber: content.trackingNumber ?? null,
-      canCancel: content.canCancel ?? false,
-      customerName: content.customerName ?? "Unknown"
+      orderId: (content as { orderId?: string }).orderId ?? orderId,
+      status: (content as { status?: string }).status ?? "UNKNOWN",
+      eta: (content as { eta?: string | null }).eta ?? null,
+      carrier: (content as { carrier?: string | null }).carrier ?? null,
+      trackingNumber: (content as { trackingNumber?: string | null }).trackingNumber ?? null,
+      canCancel: (content as { canCancel?: boolean }).canCancel ?? false,
+      customerName: (content as { customerName?: string }).customerName ?? "Unknown",
+      placedAt: (content as { placedAt?: string | null }).placedAt ?? null,
+      shippingMethod: (content as { shippingMethod?: string | null }).shippingMethod ?? null,
+      shippingAddress: (content as { shippingAddress?: Order["shippingAddress"] | null })
+        .shippingAddress ?? null,
+      payment: (content as { payment?: Order["payment"] | null }).payment ?? null,
+      totals: (content as { totals?: Order["totals"] | null }).totals ?? null,
+      items: (content as { items?: Order["items"] }).items ?? []
     };
 
     return res.json(clean);
   } catch (error: unknown) {
     console.error("Error in /api/tools/get_order_status:", error);
+    const toolError = buildToolError("MCP_UNREACHABLE", "Unable to reach MCP server.", String(error));
+    logDiagnostic("[tools] get_order_status MCP unreachable", { requestId, error: toolError });
+    if (ALLOW_MOCK_FALLBACK) {
+      const fallback = getMockFallback(toolError.code, requestId, orderId);
+      if (fallback) {
+        res.setHeader("x-oms-mock-fallback", "true");
+        return res.status(200).json(fallback);
+      }
+    }
     return res.status(500).json({
-      error: "Internal server error",
-      details: String(error)
+      error: toolError,
+      requestId
     });
   }
 });
@@ -213,4 +410,11 @@ app.post("/api/chat", async (req, res) => {
 
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`OMS assistant backend listening on http://0.0.0.0:${PORT}`);
+  logDiagnostic("[tools] MCP bridge target", MCP_URL);
+  logDiagnostic("[tools] auth mode", {
+    mode: AUTH_MODE,
+    required: AUTH_REQUIRED,
+    header: AUTH_HEADER
+  });
+  logDiagnostic("[tools] registered tool schemas", TOOL_SCHEMAS);
 });

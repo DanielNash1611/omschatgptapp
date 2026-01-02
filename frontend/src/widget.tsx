@@ -6,6 +6,7 @@ declare global {
   interface Window {
     openai?: {
       toolOutput?: unknown;
+      toolResponseMetadata?: unknown;
       setWidgetState?: (state: unknown) => void;
       actions?: {
         callTool?: (args: { name: string; arguments?: Record<string, unknown> }) => Promise<unknown>;
@@ -63,6 +64,13 @@ type Order = {
   cancelledAt?: string | null;
 };
 
+type OrderMeta = {
+  source?: string;
+  reason?: string;
+  requestId?: string;
+  originalOrderId?: string;
+};
+
 type CancelConfirmProps = {
   order: Order;
   orderSummary?: {
@@ -80,7 +88,7 @@ type CancelConfirmProps = {
 };
 
 type ToolUi =
-  | { type: "order_inquiry_card"; props: { order: Order } }
+  | { type: "order_inquiry_card"; props: { order: Order; meta?: OrderMeta } }
   | { type: "cancel_confirm"; props: CancelConfirmProps };
 
 const formatCurrency = (amount?: number, currency = "USD"): string | null => {
@@ -123,13 +131,47 @@ const normalizeOrder = (value?: Partial<Order>): Order => ({
   cancelledAt: value?.cancelledAt ?? null,
 });
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const getObjectKeys = (value: unknown): string[] => (isRecord(value) ? Object.keys(value) : []);
+
+const mergeToolState = (output: unknown, metadata: unknown): unknown => {
+  if (!isRecord(output) && !isRecord(metadata)) {
+    return output ?? metadata ?? null;
+  }
+  return {
+    ...(isRecord(output) ? output : {}),
+    ...(isRecord(metadata) ? metadata : {}),
+  };
+};
+
+const normalizeToolResponse = (value: unknown): unknown => {
+  if (!isRecord(value)) return value;
+  const structured = isRecord(value.structuredContent) ? value.structuredContent : null;
+  const meta = isRecord(value._meta) ? value._meta : null;
+  if (structured || meta) {
+    return mergeToolState(structured ?? value, meta ?? null);
+  }
+  return value;
+};
+
+const getHostToolState = (): unknown =>
+  mergeToolState(window.openai?.toolOutput ?? null, window.openai?.toolResponseMetadata ?? null);
+
 const pickUi = (source?: Record<string, unknown> | null): ToolUi | null => {
   if (!source) return null;
   const uiCandidate = source.ui;
   if (uiCandidate && typeof uiCandidate === "object" && "type" in (uiCandidate as Record<string, unknown>)) {
     const typed = uiCandidate as { type?: string; props?: Record<string, unknown> };
     if (typed.type === "order_inquiry_card" && typed.props?.order) {
-      return { type: "order_inquiry_card", props: { order: normalizeOrder(typed.props.order as Partial<Order>) } };
+      return {
+        type: "order_inquiry_card",
+        props: {
+          order: normalizeOrder(typed.props.order as Partial<Order>),
+          meta: typed.props.meta as OrderMeta | undefined
+        }
+      };
     }
     if (typed.type === "cancel_confirm" && typed.props) {
       const props = typed.props as CancelConfirmProps;
@@ -165,8 +207,12 @@ const pickUi = (source?: Record<string, unknown> | null): ToolUi | null => {
   }
 
   const orderLike = source.order ?? source;
+  const meta =
+    (source.meta as OrderMeta | undefined) ??
+    (source.structuredContent as { meta?: OrderMeta } | undefined)?.meta ??
+    undefined;
   if (orderLike && typeof orderLike === "object" && "orderId" in (orderLike as Record<string, unknown>)) {
-    return { type: "order_inquiry_card", props: { order: normalizeOrder(orderLike as Partial<Order>) } };
+    return { type: "order_inquiry_card", props: { order: normalizeOrder(orderLike as Partial<Order>), meta } };
   }
 
   return null;
@@ -193,7 +239,7 @@ const deriveUi = (raw: unknown): ToolUi | null => {
   return null;
 };
 
-function OrderInquiryCard({ order }: { order: Order }) {
+function OrderInquiryCard({ order, meta }: { order: Order; meta?: OrderMeta }) {
   const [showItems, setShowItems] = useState(false);
   const totals = order.totals;
   const items = order.items ?? [];
@@ -202,6 +248,11 @@ function OrderInquiryCard({ order }: { order: Order }) {
 
   return (
     <div className="card order-card">
+      {meta?.source === "mock_fallback" ? (
+        <div className="mock-banner">
+          Mock fallback used ({meta.reason ?? "unknown reason"}).
+        </div>
+      ) : null}
       <div className="order-card__header">
         <div>
           <p className="eyebrow">Order summary</p>
@@ -399,7 +450,7 @@ function CancelConfirmCard({
 }
 
 function Widget() {
-  const [latest, setLatest] = useState<unknown>(() => window.openai?.toolOutput ?? null);
+  const [latest, setLatest] = useState<unknown>(() => getHostToolState());
 
   useEffect(() => {
     window.openai?.setWidgetState?.(latest);
@@ -409,6 +460,11 @@ function Widget() {
 
   useEffect(() => {
     if (import.meta.env?.DEV) {
+      console.debug("[oms-widget] toolOutput keys", getObjectKeys(window.openai?.toolOutput));
+      console.debug(
+        "[oms-widget] toolResponseMetadata keys",
+        getObjectKeys(window.openai?.toolResponseMetadata)
+      );
       console.debug("[oms-widget] latest tool output", latest);
       console.debug("[oms-widget] resolved ui", ui);
     }
@@ -425,13 +481,17 @@ function Widget() {
   };
 
   const handleConfirm = async (typedPhrase: string, payload: CancelConfirmProps) => {
-    const result = await callTool("order_cancel", {
+    const toolPayload = {
       orderId: payload.order.orderId,
       confirmationId: payload.confirmationId,
       typedPhrase,
-    });
+    };
+    if (import.meta.env?.DEV) {
+      console.debug("[oms-widget] confirm tool payload", toolPayload);
+    }
+    const result = await callTool("cancel_order", toolPayload);
     if (result !== undefined) {
-      setLatest(result);
+      setLatest(normalizeToolResponse(result));
     }
   };
 
@@ -453,7 +513,9 @@ function Widget() {
         </div>
       )}
 
-      {ui?.type === "order_inquiry_card" && <OrderInquiryCard order={ui.props.order} />}
+      {ui?.type === "order_inquiry_card" && (
+        <OrderInquiryCard order={ui.props.order} meta={ui.props.meta} />
+      )}
       {ui?.type === "cancel_confirm" && (
         <CancelConfirmCard
           {...ui.props}
