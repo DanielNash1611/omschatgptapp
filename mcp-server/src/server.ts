@@ -48,6 +48,10 @@ const TOOL_DEBUG_INFO = [
     meta: TOOL_OUTPUT_TEMPLATE_META,
   },
   {
+    name: "get_order_status_v2",
+    meta: TOOL_OUTPUT_TEMPLATE_META,
+  },
+  {
     name: "order_inquiry",
     meta: TOOL_OUTPUT_TEMPLATE_META,
   },
@@ -56,11 +60,19 @@ const TOOL_DEBUG_INFO = [
     meta: TOOL_OUTPUT_AND_ACCESS_META,
   },
   {
+    name: "cancel_order_v2",
+    meta: TOOL_OUTPUT_AND_ACCESS_META,
+  },
+  {
     name: "order_cancel",
     meta: TOOL_OUTPUT_AND_ACCESS_META,
   },
   {
     name: "confirm_cancel_order",
+    meta: TOOL_OUTPUT_TEMPLATE_META,
+  },
+  {
+    name: "confirm_cancel_order_v2",
     meta: TOOL_OUTPUT_TEMPLATE_META,
   },
   {
@@ -391,6 +403,16 @@ const createServer = () => {
     async ({ orderId }) => handleOrderInquiry(orderId)
   );
   server.registerTool(
+    "get_order_status_v2",
+    {
+      title: "Get order status v2",
+      description: "Look up the status and details for an OMS order (v2).",
+      inputSchema: orderIdSchema,
+      _meta: TOOL_OUTPUT_TEMPLATE_META,
+    },
+    async ({ orderId }) => withToolVersion(await handleOrderInquiry(orderId), "v2")
+  );
+  server.registerTool(
     "order_inquiry",
     {
       title: "Order inquiry",
@@ -410,7 +432,18 @@ const createServer = () => {
       _meta: TOOL_OUTPUT_AND_ACCESS_META,
     },
     async ({ orderId, confirmationId, typedPhrase }) =>
-      handleOrderCancel({ orderId, confirmationId, typedPhrase })
+      handleOrderCancel({ orderId })
+  );
+  server.registerTool(
+    "cancel_order_v2",
+    {
+      title: "Cancel order v2",
+      description: "Request or confirm an OMS order cancellation (v2).",
+      inputSchema: cancelOrderSchema,
+      _meta: TOOL_OUTPUT_AND_ACCESS_META,
+    },
+    async ({ orderId, confirmationId, typedPhrase }) =>
+      withToolVersion(await handleOrderCancel({ orderId, confirmationId, typedPhrase }), "v2")
   );
   server.registerTool(
     "order_cancel",
@@ -433,6 +466,17 @@ const createServer = () => {
       _meta: TOOL_OUTPUT_TEMPLATE_META,
     },
     async ({ orderId, typedPhrase }) => handleConfirmCancelOrder({ orderId, typedPhrase })
+  );
+  server.registerTool(
+    "confirm_cancel_order_v2",
+    {
+      title: "Confirm cancel order v2",
+      description: "Finalize a pending OMS order cancellation after phrase confirmation (v2).",
+      inputSchema: confirmCancelSchema,
+      _meta: TOOL_OUTPUT_TEMPLATE_META,
+    },
+    async ({ orderId, typedPhrase }) =>
+      withToolVersion(await handleConfirmCancelOrder({ orderId, typedPhrase }), "v2")
   );
 
   server.registerTool(
@@ -497,6 +541,14 @@ const buildOrderSummary = (order: Order): Record<string, unknown> => ({
     : null,
   itemCount: itemCount(order),
   cancelledAt: order.cancelledAt ?? null,
+});
+
+const withToolVersion = (result: CallToolResult, toolVersion: string): CallToolResult => ({
+  ...result,
+  structuredContent: {
+    ...(result.structuredContent ?? {}),
+    toolVersion,
+  },
 });
 
 const buildOrderStub = (orderId: string): Order => ({
