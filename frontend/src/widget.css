@@ -10,15 +10,25 @@
   box-sizing: border-box;
 }
 
+html,
 body {
+  height: auto;
   margin: 0;
+}
+
+body {
   background: #0b1221;
   color: #e2e8f0;
 }
 
+#oms-root {
+  display: block;
+  height: auto;
+}
+
 .widget {
   padding: 20px;
-  min-height: 100vh;
+  height: auto;
   background: radial-gradient(circle at 10% 10%, #132344, transparent 35%),
     radial-gradient(circle at 80% 0%, #132344, transparent 30%),
     linear-gradient(140deg, #0b1221, #0f172a 70%);
