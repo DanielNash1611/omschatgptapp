@@ -4,6 +4,10 @@ import react from "@vitejs/plugin-react";
 
 export default defineConfig({
   plugins: [react()],
+  define: {
+    "process.env.NODE_ENV": JSON.stringify("production"),
+    "process.env": JSON.stringify({ NODE_ENV: "production" }),
+  },
   build: {
     outDir: resolve(__dirname, "public", "widget"),
     emptyOutDir: true,
@@ -16,6 +20,8 @@ export default defineConfig({
     rollupOptions: {
       output: {
         inlineDynamicImports: true,
+        banner:
+          "(function(){var p=globalThis.process;if(!p){globalThis.process={env:{NODE_ENV:\"production\"}};}else if(!p.env){p.env={NODE_ENV:\"production\"};}else if(!(\"NODE_ENV\" in p.env)){p.env.NODE_ENV=\"production\";}})();",
         assetFileNames: assetInfo =>
           assetInfo.name && assetInfo.name.endsWith(".css")
             ? "widget.css"
