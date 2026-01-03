@@ -5,7 +5,12 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
-import { cancelOrder, getOrderStatus } from "./oms.js";
+import {
+  cancelOrder,
+  getOrderStatus,
+  listMockOrders,
+  resetMockOrders,
+} from "./oms.js";
 import type { CancelOrderResult, Order } from "./types.js";
 
 const PATH = "/mcp";
@@ -93,6 +98,14 @@ const TOOL_DEBUG_INFO = [
     meta: TOOL_OUTPUT_TEMPLATE_META,
   },
   {
+    name: "list_mock_orders",
+    meta: TOOL_DEBUG_META,
+  },
+  {
+    name: "reset_mock_data",
+    meta: TOOL_DEBUG_META,
+  },
+  {
     name: "debug_list_tools",
     meta: TOOL_DEBUG_META,
   },
@@ -129,8 +142,12 @@ const confirmCancelSchema = z.object({
   orderId: z.string().min(1, "orderId is required"),
   typedPhrase: z.string().min(1, "typedPhrase is required"),
 });
+const resetMockSchema = z.object({
+  scenario: z.enum(["default"]).optional(),
+});
+const listMockSchema = z.object({});
 
-const pendingConfirmations: Record<string, { orderId: string; expiresAt: number }> = {};
+const pendingConfirmations = new Map<string, { orderId: string; expiresAt: number }>();
 
 type WidgetHtmlResult = {
   html: string;
@@ -325,6 +342,25 @@ const createServer = () => {
   );
 
   server.registerTool(
+    "list_mock_orders",
+    {
+      title: "List mock orders",
+      description: "Return a compact summary of mock orders for demos.",
+      inputSchema: listMockSchema,
+    },
+    async () => handleListMockOrders()
+  );
+  server.registerTool(
+    "reset_mock_data",
+    {
+      title: "Reset mock orders",
+      description: "Reset mock orders and confirmation state to the default demo seed.",
+      inputSchema: resetMockSchema,
+    },
+    async () => handleResetMockData()
+  );
+
+  server.registerTool(
     "debug_list_tools",
     {
       title: "Debug list tools",
@@ -463,6 +499,32 @@ const handleDebugListTools = (): CallToolResult => {
   };
 };
 
+const handleListMockOrders = async (): Promise<CallToolResult> => {
+  const orders = await listMockOrders();
+  const summary = orders.map(order => ({
+    orderId: order.orderId,
+    status: order.status,
+    canCancel: order.canCancel,
+    eta: order.eta ?? null,
+    customerName: order.customerName,
+  }));
+  return {
+    structuredContent: toStructured({ orders: summary }),
+    content: [{ type: "text" as const, text: "Mock orders listed." }],
+  };
+};
+
+const handleResetMockData = async (): Promise<CallToolResult> => {
+  resetMockOrders();
+  pendingConfirmations.clear();
+  const orders = await listMockOrders();
+  const orderIds = orders.map(order => order.orderId);
+  return {
+    structuredContent: toStructured({ ok: true, reset: true, orderIds }),
+    content: [{ type: "text" as const, text: "Mock orders reset." }],
+  };
+};
+
 const handleConfirmCancelOrder = async ({
   orderId,
   typedPhrase,
@@ -485,13 +547,13 @@ const handleConfirmCancelOrder = async ({
   }
 
   const requiredPhrase = requiredPhraseFor(orderId);
-  const confirmation = pendingConfirmations[orderId];
+  const confirmation = pendingConfirmations.get(orderId);
   const now = Date.now();
 
   if (!confirmation || confirmation.expiresAt < now) {
     const text = "Cancellation confirmation expired. Start again to cancel.";
     if (confirmation) {
-      delete pendingConfirmations[orderId];
+      pendingConfirmations.delete(orderId);
     }
     return {
       structuredContent: toStructured({
@@ -537,7 +599,7 @@ const handleConfirmCancelOrder = async ({
   }
 
   const result = await cancelOrder(orderId);
-  delete pendingConfirmations[orderId];
+  pendingConfirmations.delete(orderId);
   const updatedOrder = (await getOrderStatus(orderId)) ?? order;
   const text = result.success
     ? `Order ${orderId} has been cancelled.`
@@ -615,10 +677,10 @@ const handleOrderCancel = async ({
   const requiredPhrase = requiredPhraseFor(orderId);
   const confirmationKey = orderId;
   const now = Date.now();
-  const existing = pendingConfirmations[confirmationKey];
+  const existing = pendingConfirmations.get(confirmationKey);
 
   if (existing && existing.expiresAt < now) {
-    delete pendingConfirmations[confirmationKey];
+    pendingConfirmations.delete(confirmationKey);
   }
 
   if (!confirmationId || !typedPhrase) {
@@ -644,7 +706,7 @@ const handleOrderCancel = async ({
     }
 
     const expiresAtMs = now + CONFIRMATION_TTL_MS;
-    pendingConfirmations[confirmationKey] = { orderId, expiresAt: expiresAtMs };
+    pendingConfirmations.set(confirmationKey, { orderId, expiresAt: expiresAtMs });
     const expiresAt = new Date(expiresAtMs).toISOString();
     const text = `Reply with "${requiredPhrase}" to confirm cancellation.`;
     return {
@@ -685,11 +747,11 @@ const handleOrderCancel = async ({
     };
   }
 
-  const confirmation = pendingConfirmations[confirmationKey];
+  const confirmation = pendingConfirmations.get(confirmationKey);
   if (!confirmation || confirmation.expiresAt < now) {
     const text = "Cancellation confirmation expired. Start again to cancel.";
     if (confirmation) {
-      delete pendingConfirmations[confirmationKey];
+      pendingConfirmations.delete(confirmationKey);
     }
     return {
       structuredContent: toStructured({
@@ -735,7 +797,7 @@ const handleOrderCancel = async ({
   }
 
   const result = await cancelOrder(orderId);
-  delete pendingConfirmations[confirmationKey];
+  pendingConfirmations.delete(confirmationKey);
   const updatedOrder = (await getOrderStatus(orderId)) ?? order;
 
   const structuredContent = toStructured({

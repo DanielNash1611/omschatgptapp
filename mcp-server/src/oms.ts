@@ -38,14 +38,14 @@ const baseItems = [
   },
 ];
 
-const mockOrders: Order[] = [
-  {
+const INITIAL_ORDERS: Record<string, Order> = {
+  "1001": {
     orderId: "1001",
     customerName: "Alex Rivera",
-    status: "Shipped",
+    status: "Delivered",
     carrier: "UPS",
     trackingNumber: "1Z999AA10123456784",
-    eta: "2025-01-15",
+    eta: "2025-01-05",
     canCancel: false,
     placedAt: "2024-12-28T18:24:00.000Z",
     shippingMethod: "UPS Ground",
@@ -60,8 +60,9 @@ const mockOrders: Order[] = [
     payment: { method: "Visa", last4: "4242" },
     totals: { subtotal: 1479.96, shipping: 29, tax: 123.56, total: 1632.52, currency: "USD" },
     items: baseItems.map(item => ({ ...item })),
+    cancelledAt: null,
   },
-  {
+  "1002": {
     orderId: "1002",
     customerName: "Jordan Lee",
     status: "Processing",
@@ -82,14 +83,15 @@ const mockOrders: Order[] = [
     payment: { method: "Visa", last4: "4242" },
     totals: { subtotal: 1479.96, shipping: 25, tax: 118.4, total: 1623.36, currency: "USD" },
     items: baseItems.map(item => ({ ...item })),
+    cancelledAt: null,
   },
-  {
+  "1003": {
     orderId: "1003",
     customerName: "Taylor Kim",
-    status: "Delivered",
+    status: "Shipped",
     carrier: "FedEx",
     trackingNumber: "999999999999",
-    eta: "2025-01-05",
+    eta: "2025-01-15",
     canCancel: false,
     placedAt: "2024-12-20T12:05:00.000Z",
     shippingMethod: "FedEx Home Delivery",
@@ -104,15 +106,21 @@ const mockOrders: Order[] = [
     payment: { method: "Mastercard", last4: "2020" },
     totals: { subtotal: 1479.96, shipping: 19, tax: 121.96, total: 1620.92, currency: "USD" },
     items: baseItems.map(item => ({ ...item })),
+    cancelledAt: null,
   },
-];
+};
+
+const cloneOrders = (): Record<string, Order> =>
+  JSON.parse(JSON.stringify(INITIAL_ORDERS)) as Record<string, Order>;
+
+let orders = cloneOrders();
 
 const maybeDelay = async () => new Promise(resolve => setTimeout(resolve, 120));
 
 export async function getOrderStatus(orderId: string): Promise<Order | null> {
   await maybeDelay();
-  const order = mockOrders.find(o => o.orderId === orderId);
-  return order ?? null;
+  const order = orders[orderId];
+  return order ? (JSON.parse(JSON.stringify(order)) as Order) : null;
 }
 
 // Mock cancel implementation kept for parity with downstream tooling expectations.
@@ -120,7 +128,7 @@ export async function cancelOrder(
   orderId: string
 ): Promise<CancelOrderResult & { order?: Order }> {
   await maybeDelay();
-  const order = mockOrders.find(o => o.orderId === orderId);
+  const order = orders[orderId];
   if (!order) {
     return { success: false, reason: "ORDER_NOT_FOUND", orderId };
   }
@@ -135,9 +143,6 @@ export async function cancelOrder(
   }
   order.status = "Cancelled";
   order.canCancel = false;
-  order.carrier = null;
-  order.trackingNumber = null;
-  order.eta = null;
   const cancelledAt = new Date().toISOString();
   order.cancelledAt = cancelledAt;
   return {
@@ -145,8 +150,17 @@ export async function cancelOrder(
     status: order.status,
     orderId,
     cancelledAt,
-    order,
+    order: JSON.parse(JSON.stringify(order)) as Order,
   };
 }
 
-export { mockOrders };
+export async function listMockOrders(): Promise<Order[]> {
+  await maybeDelay();
+  return Object.values(orders).map(order => JSON.parse(JSON.stringify(order)) as Order);
+}
+
+export function resetMockOrders(): void {
+  orders = cloneOrders();
+}
+
+export { INITIAL_ORDERS };
