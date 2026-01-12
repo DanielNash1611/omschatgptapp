@@ -10,3 +10,4 @@ frontend/public/widget/widget.js
 frontend/public/widget/widget.css
 mcp-server/widget-dist
 *.tsbuildinfo
+backend/.env
