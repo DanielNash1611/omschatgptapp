@@ -14,7 +14,7 @@ import {
 import type { CancelOrderResult, Order } from "./types.js";
 
 const PATH = "/mcp";
-const PORT = Number(process.env.PORT ?? "8787");
+const PORT = Number(process.env.PORT ?? "3002");
 const HOST = "0.0.0.0";
 const CONFIRMATION_TTL_MS = 10 * 60 * 1000;
 const INSTANCE_ID = process.env.RENDER_INSTANCE_ID ?? randomUUID().slice(0, 8);

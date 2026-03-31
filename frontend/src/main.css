@@ -113,6 +113,7 @@ h1 {
   border: 1px solid rgba(255, 255, 255, 0.04);
   background: rgba(255, 255, 255, 0.03);
   color: #e2e8f0;
+  max-width: min(100%, 760px);
 }
 
 .message--user {
@@ -127,6 +128,26 @@ h1 {
   align-self: flex-start;
 }
 
+.message--visual {
+  padding: 0;
+  border: none;
+  background: transparent;
+  max-width: min(100%, 820px);
+}
+
+.message--visual .message-author {
+  margin: 0 0 8px 4px;
+}
+
+.message-visual {
+  display: flex;
+  flex-direction: column;
+}
+
+.message-visual .oms-tool-ui .card {
+  margin: 0;
+}
+
 .message-author {
   display: block;
   font-size: 0.8rem;
@@ -136,8 +157,17 @@ h1 {
   color: #93c5fd;
 }
 
-.message p {
+.message-text {
   margin: 0;
+  white-space: pre-wrap;
+}
+
+.message--visual .message-text {
+  margin-top: 10px;
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  background: rgba(255, 255, 255, 0.06);
 }
 
 .chat-input {
@@ -191,29 +221,6 @@ h1 {
 .actions button:hover:not(:disabled) {
   transform: translateY(-1px);
   box-shadow: 0 8px 24px rgba(37, 99, 235, 0.35);
-}
-
-.debug {
-  border: 1px dashed rgba(255, 255, 255, 0.2);
-  border-radius: 12px;
-  padding: 10px 12px;
-  color: #cbd5e1;
-  background: rgba(0, 0, 0, 0.35);
-}
-
-.debug-title {
-  margin: 0 0 6px 0;
-  font-weight: 700;
-  color: #e2e8f0;
-}
-
-.debug pre {
-  margin: 6px 0 0 0;
-  padding: 10px;
-  background: rgba(255, 255, 255, 0.05);
-  border-radius: 8px;
-  overflow: auto;
-  color: #e2e8f0;
 }
 
 .sr-only {

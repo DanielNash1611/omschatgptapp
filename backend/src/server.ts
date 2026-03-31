@@ -129,6 +129,73 @@ const getMockFallback = (reason: string, requestId: string, originalOrderId: str
   };
 };
 
+const isOrderLike = (value: unknown): value is Order =>
+  typeof value === "object" &&
+  value !== null &&
+  typeof (value as { orderId?: unknown }).orderId === "string";
+
+const buildOrderStub = (orderId: string): Order => ({
+  orderId,
+  status: "NOT_FOUND",
+  customerName: "Unknown",
+  carrier: null,
+  trackingNumber: null,
+  eta: null,
+  canCancel: false,
+  placedAt: null,
+  shippingMethod: null,
+  shippingAddress: null,
+  payment: null,
+  totals: null,
+  items: [],
+  cancelledAt: null
+});
+
+const buildOrderInquiryUi = (order: Order) => ({
+  type: "order_inquiry_card",
+  props: { order }
+});
+
+const decorateToolResult = (
+  functionName: string,
+  orderId: string | undefined,
+  toolResult: unknown
+): unknown => {
+  if (functionName === "get_order_status") {
+    const order = isOrderLike(toolResult)
+      ? toolResult
+      : buildOrderStub(orderId ?? "Unknown");
+
+    return {
+      ...(isOrderLike(toolResult) ? toolResult : order),
+      found: isOrderLike(toolResult),
+      reason: isOrderLike(toolResult) ? undefined : "ORDER_NOT_FOUND",
+      ui: buildOrderInquiryUi(order)
+    };
+  }
+
+  if (functionName === "cancel_order") {
+    const base =
+      typeof toolResult === "object" && toolResult !== null
+        ? (toolResult as Record<string, unknown>)
+        : {};
+    const orderCandidate = "order" in base ? base.order : null;
+    const resolvedOrderId =
+      typeof base.orderId === "string" ? base.orderId : orderId ?? "Unknown";
+    const order = isOrderLike(orderCandidate)
+      ? orderCandidate
+      : buildOrderStub(resolvedOrderId);
+
+    return {
+      ...base,
+      order,
+      ui: buildOrderInquiryUi(order)
+    };
+  }
+
+  return toolResult;
+};
+
 app.get("/health", (_req, res) => {
   res.json({ status: "ok" });
 });
@@ -359,10 +426,16 @@ app.post("/api/chat", async (req, res) => {
           : { error: "orderId missing" };
       }
 
+      const decoratedToolResult = decorateToolResult(
+        functionName,
+        debugOrderId,
+        toolResult
+      );
+
       messages.push({
         role: "tool",
         tool_call_id: toolCall.id,
-        content: JSON.stringify(toolResult)
+        content: JSON.stringify(decoratedToolResult)
       });
 
       const secondResponse = await callAssistant(messages);
@@ -386,10 +459,12 @@ app.post("/api/chat", async (req, res) => {
 
       return res.json({
         assistantMessage: finalText,
+        toolName: debugAction,
+        toolResult: decoratedToolResult,
         debug: {
           action: debugAction,
           orderId: debugOrderId,
-          toolResult
+          toolResult: decoratedToolResult
         }
       });
     }

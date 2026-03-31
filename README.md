@@ -5,13 +5,13 @@ Small, two-tier TypeScript prototype that wires a ChatGPT-style UI to mock OMS t
 ## Backend
 - Location: `backend`
 - Stack: Express + TypeScript + OpenAI SDK (tool calls)
-- Quickstart: `cd backend && npm install && echo "OPENAI_API_KEY=your_key" > .env && npm run dev`
+- Quickstart: `echo "OPENAI_API_KEY=your_key" > backend/.env && npm run dev`
 - API: POST `http://localhost:3001/api/chat` with `{ "message": "Where is order 1002?" }`
 
 ## Frontend
 - Location: `frontend`
 - Stack: React + TypeScript + Vite
-- Quickstart: `cd frontend && npm install && npm run dev` then open `http://localhost:5173`
+- Included in root `npm run dev`; open `http://localhost:5173`
 - The UI posts chat messages to `http://localhost:3001/api/chat`
 
 ## Shared OMS logic
@@ -24,7 +24,13 @@ Small, two-tier TypeScript prototype that wires a ChatGPT-style UI to mock OMS t
 - Stack: TypeScript + `@modelcontextprotocol/sdk`
 - Tools: `get_order_status(orderId: string)`, `cancel_order(orderId: string, confirmationId?: string, typedPhrase?: string)`
 - Widget template URI: `ui://widget/oms-order-v2.html` (inlined from `mcp-server/widget-dist`, copied from `frontend/dist`)
-- Quickstart: `npm run build` at repo root, then `cd mcp-server && npm install && npm run dev` (defaults to port 8787)
+- Included in root `npm run dev`
+
+## Local dev
+- Install once: `npm install && (cd backend && npm install) && (cd frontend && npm install) && (cd mcp-server && npm install)`
+- Set `OPENAI_API_KEY` in `backend/.env`
+- Start everything from the repo root: `npm run dev`
+- This starts backend on `http://localhost:3001`, MCP on `http://localhost:3002/mcp`, and frontend on `http://localhost:5173`
 
 ## Render (Option A)
 - Build Command: `npm ci && npm run build`

@@ -3,9 +3,9 @@
 Minimal MCP-style server implemented with Node HTTP + TypeScript (no `@modelcontextprotocol/sdk` dependency) to expose OMS tools for local testing or as a scaffold for a future MCP server.
 
 ### Quickstart
-1) `cd mcp-server`
-2) `npm install`
-3) `npm run dev` (listens on `http://localhost:3002/mcp`; set `PORT` to change the listener)
+1) Install dependencies at the repo root and in each app workspace.
+2) From the repo root, run `npm run dev`.
+3) This server listens on `http://localhost:3002/mcp` as part of the combined startup with backend and frontend.
 
 ### Endpoint
 - `POST http://localhost:3002/mcp`

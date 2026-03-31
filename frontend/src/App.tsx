@@ -1,4 +1,5 @@
 import { FormEvent, useMemo, useState } from "react";
+import { deriveOmsToolUi, OmsToolUiCard } from "./omsToolUi";
 
 // Frontend quickstart:
 // 1) cd frontend
@@ -20,13 +21,8 @@ type ChatMessage = {
   id: string;
   role: "user" | "assistant";
   content: string;
-};
-
-type DebugInfo = {
-  action?: string;
-  orderId?: string;
   toolResult?: unknown;
-} | null;
+};
 
 const createId = () =>
   typeof crypto !== "undefined" && "randomUUID" in crypto
@@ -37,7 +33,6 @@ function App() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  const [debugInfo, setDebugInfo] = useState<DebugInfo>(null);
 
   const placeholder = useMemo(
     () =>
@@ -78,11 +73,11 @@ function App() {
       const assistantMessage: ChatMessage = {
         id: createId(),
         role: "assistant",
-        content: assistantText
+        content: assistantText,
+        toolResult: data.toolResult ?? data.debug?.toolResult
       };
 
       setMessages(prev => [...prev, assistantMessage]);
-      setDebugInfo(data.debug ?? null);
     } catch (error) {
       console.error(error);
       const assistantMessage: ChatMessage = {
@@ -124,20 +119,12 @@ function App() {
       <main className="app">
         <section className="chat-window" aria-live="polite">
           {messages.map(message => (
-            <div
-              key={message.id}
-              className={`message message--${message.role}`}
-            >
-              <span className="message-author">
-                {message.role === "user" ? "You" : "Assistant"}
-              </span>
-              <p>{message.content}</p>
-            </div>
+            <MessageBubble key={message.id} message={message} />
           ))}
           {isLoading && (
             <div className="message message--assistant">
               <span className="message-author">Assistant</span>
-              <p>Thinking...</p>
+              <p className="message-text">Thinking...</p>
             </div>
           )}
         </section>
@@ -159,20 +146,29 @@ function App() {
             </button>
           </div>
         </form>
-
-        {debugInfo && (
-          <div className="debug">
-            <p className="debug-title">Last tool call</p>
-            <p>
-              Action: <strong>{debugInfo.action ?? "n/a"}</strong>
-              {debugInfo.orderId ? ` · Order: ${debugInfo.orderId}` : ""}
-            </p>
-            {debugInfo.toolResult != null ? (
-              <pre>{JSON.stringify(debugInfo.toolResult, null, 2)}</pre>
-            ) : null}
-          </div>
-        )}
       </main>
+    </div>
+  );
+}
+
+function MessageBubble({ message }: { message: ChatMessage }) {
+  const toolUi =
+    message.role === "assistant" ? deriveOmsToolUi(message.toolResult) : null;
+  const hasVisual = toolUi !== null;
+
+  return (
+    <div
+      className={`message message--${message.role}${hasVisual ? " message--visual" : ""}`}
+    >
+      <span className="message-author">
+        {message.role === "user" ? "You" : "Assistant"}
+      </span>
+      {toolUi ? (
+        <div className="message-visual">
+          <OmsToolUiCard ui={toolUi} />
+        </div>
+      ) : null}
+      {message.content ? <p className="message-text">{message.content}</p> : null}
     </div>
   );
 }

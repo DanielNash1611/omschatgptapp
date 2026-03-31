@@ -24,7 +24,7 @@
 
 ## How to verify widget loads
 1) Build at the repo root (`npm run build`) so `frontend/dist` exists and is copied to `mcp-server/widget-dist`.
-2) Start MCP server (`cd mcp-server && npm run dev`).
+2) Start the full local stack from the repo root (`npm run dev`).
 3) Call `get_order_status` for order 1002 and confirm the widget renders instead of plain tool text.
 4) The Skybridge HTML inlines JS/CSS from `mcp-server/widget-dist/assets` (no external asset fetch required).
 
