@@ -10,7 +10,8 @@ export default defineConfig({
   },
   build: {
     outDir: resolve(__dirname, "public", "widget"),
-    emptyOutDir: true,
+    // Keep the tracked static preview shell alongside the generated widget assets.
+    emptyOutDir: false,
     cssCodeSplit: false,
     lib: {
       entry: resolve(__dirname, "src", "widget", "main.tsx"),
