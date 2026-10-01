@@ -12,7 +12,14 @@
     "build:mcp": "cd mcp-server && npm ci && npm run build",
     "copy:widget": "node scripts/copy-widget.js",
     "verify:widget": "node scripts/verify-widget-build.js",
-    "build": "npm run build:widget && npm run verify:widget && npm run build:mcp && npm run copy:widget",
-    "start:mcp": "cd mcp-server && npm start"
+    "build": "npm run build:widget && npm run verify:widget && npm run build:mcp && npm run copy:widget && npm --prefix backend run build",
+    "start:mcp": "cd mcp-server && npm start",
+    "test": "node --import ./mcp-server/node_modules/tsx/dist/loader.mjs --test tests/*.test.ts",
+    "lint": "npm --prefix frontend run lint",
+    "typecheck": "npm --prefix backend run typecheck && npm --prefix mcp-server run typecheck && npm --prefix frontend run typecheck",
+    "test:built-mcp": "node scripts/smoke-mcp.mjs"
+  },
+  "engines": {
+    "node": ">=22.12.0 <25"
   }
 }
