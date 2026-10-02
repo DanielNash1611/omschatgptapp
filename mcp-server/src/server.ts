@@ -12,6 +12,7 @@ import {
   resetMockOrders,
 } from "./oms.js";
 import type { CancelOrderResult, Order } from "./types.js";
+import { withToolUsage } from "./analytics.js";
 
 const PATH = "/mcp";
 const PORT = Number(process.env.PORT ?? "3002");
@@ -262,7 +263,7 @@ const createServer = () => {
       inputSchema: orderIdSchema,
       _meta: TOOL_OUTPUT_TEMPLATE_META,
     },
-    async ({ orderId }) => handleOrderInquiry(orderId)
+    async ({ orderId }, extra) => withToolUsage(extra.requestInfo?.headers, async () => handleOrderInquiry(orderId))
   );
   server.registerTool(
     "get_order_status_v2",
@@ -272,7 +273,7 @@ const createServer = () => {
       inputSchema: orderIdSchema,
       _meta: TOOL_OUTPUT_TEMPLATE_META,
     },
-    async ({ orderId }) => withToolVersion(await handleOrderInquiry(orderId), "v2")
+    async ({ orderId }, extra) => withToolUsage(extra.requestInfo?.headers, async () => withToolVersion(await handleOrderInquiry(orderId), "v2"))
   );
   server.registerTool(
     "order_inquiry",
@@ -282,7 +283,7 @@ const createServer = () => {
       inputSchema: orderIdSchema,
       _meta: TOOL_OUTPUT_TEMPLATE_META,
     },
-    async ({ orderId }) => handleOrderInquiry(orderId)
+    async ({ orderId }, extra) => withToolUsage(extra.requestInfo?.headers, async () => handleOrderInquiry(orderId))
   );
 
   server.registerTool(
@@ -293,8 +294,8 @@ const createServer = () => {
       inputSchema: cancelOrderSchema,
       _meta: TOOL_OUTPUT_AND_ACCESS_META,
     },
-    async ({ orderId, confirmationId, typedPhrase }) =>
-      handleOrderCancel({ orderId })
+    async ({ orderId, confirmationId, typedPhrase }, extra) =>
+      withToolUsage(extra.requestInfo?.headers, async () => handleOrderCancel({ orderId }))
   );
   server.registerTool(
     "cancel_order_v2",
@@ -304,8 +305,8 @@ const createServer = () => {
       inputSchema: cancelOrderSchema,
       _meta: TOOL_OUTPUT_AND_ACCESS_META,
     },
-    async ({ orderId, confirmationId, typedPhrase }) =>
-      withToolVersion(await handleOrderCancel({ orderId, confirmationId, typedPhrase }), "v2")
+    async ({ orderId, confirmationId, typedPhrase }, extra) =>
+      withToolUsage(extra.requestInfo?.headers, async () => withToolVersion(await handleOrderCancel({ orderId, confirmationId, typedPhrase }), "v2"))
   );
   server.registerTool(
     "order_cancel",
@@ -315,8 +316,8 @@ const createServer = () => {
       inputSchema: cancelOrderSchema,
       _meta: TOOL_OUTPUT_AND_ACCESS_META,
     },
-    async ({ orderId, confirmationId, typedPhrase }) =>
-      handleOrderCancel({ orderId, confirmationId, typedPhrase })
+    async ({ orderId, confirmationId, typedPhrase }, extra) =>
+      withToolUsage(extra.requestInfo?.headers, async () => handleOrderCancel({ orderId, confirmationId, typedPhrase }))
   );
 
   server.registerTool(
@@ -327,7 +328,7 @@ const createServer = () => {
       inputSchema: confirmCancelSchema,
       _meta: TOOL_OUTPUT_TEMPLATE_META,
     },
-    async ({ orderId, typedPhrase }) => handleConfirmCancelOrder({ orderId, typedPhrase })
+    async ({ orderId, typedPhrase }, extra) => withToolUsage(extra.requestInfo?.headers, async () => handleConfirmCancelOrder({ orderId, typedPhrase }))
   );
   server.registerTool(
     "confirm_cancel_order_v2",
@@ -337,8 +338,8 @@ const createServer = () => {
       inputSchema: confirmCancelSchema,
       _meta: TOOL_OUTPUT_TEMPLATE_META,
     },
-    async ({ orderId, typedPhrase }) =>
-      withToolVersion(await handleConfirmCancelOrder({ orderId, typedPhrase }), "v2")
+    async ({ orderId, typedPhrase }, extra) =>
+      withToolUsage(extra.requestInfo?.headers, async () => withToolVersion(await handleConfirmCancelOrder({ orderId, typedPhrase }), "v2"))
   );
 
   server.registerTool(
