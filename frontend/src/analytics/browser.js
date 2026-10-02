@@ -89,6 +89,7 @@ export function mountPrivacyControl(container, analytics) {
       button.type = "button";
       button.textContent = "Turn off";
       button.className = "text-action";
+      Object.assign(button.style, { color: "inherit", background: "transparent", border: "0", padding: "0", font: "inherit", textDecoration: "underline", cursor: "pointer" });
       button.addEventListener("click", () => { analytics.disable(); render(); });
       container.append(button);
     }
