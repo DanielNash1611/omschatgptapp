@@ -1,4 +1,4 @@
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { deriveOmsToolUi, OmsToolUiCard } from "./omsToolUi";
 
 // Frontend quickstart:
@@ -30,6 +30,9 @@ const createId = () =>
     : Math.random().toString(36).slice(2);
 
 function App() {
+  const [disabled, setDisabled] = useState(false);
+  const [visible, setVisible] = useState(false);
+  useEffect(() => { analytics.page(); setVisible(analytics.isHosted()); setDisabled(!analytics.isEnabled()); }, []);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -52,6 +55,7 @@ function App() {
     setMessages(prev => [...prev, userMessage]);
     setInput("");
     setIsLoading(true);
+    void analytics.track("assistant_requested");
 
     try {
       const response = await fetch(`${API_BASE}/api/chat`, {
@@ -78,7 +82,9 @@ function App() {
       };
 
       setMessages(prev => [...prev, assistantMessage]);
+      if (typeof data.assistantMessage === "string") void analytics.track("assistant_responded");
     } catch (error) {
+      void analytics.track("assistant_failed");
       console.error(error);
       const assistantMessage: ChatMessage = {
         id: createId(),
@@ -147,6 +153,7 @@ function App() {
           </div>
         </form>
       </main>
+      {visible && <p style={{fontSize: "0.75rem", textAlign: "center"}}>{disabled ? "Usage analytics is off." : <>Usage analytics counts actions, without chat or order content. <button type="button" onClick={() => { analytics.disable(); setDisabled(true); }}>Turn off</button></>}</p>}
     </div>
   );
 }
@@ -174,3 +181,4 @@ function MessageBubble({ message }: { message: ChatMessage }) {
 }
 
 export default App;
+import { analytics } from "./analytics";
