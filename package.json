@@ -7,17 +7,18 @@
     "dev:backend": "cd backend && npm run dev",
     "dev:frontend": "cd frontend && npm run dev",
     "dev:mcp": "cd mcp-server && npm run dev",
-    "build:widget": "cd frontend && npm ci && npm run build",
-    "build:frontend": "cd frontend && npm ci && npm run build",
-    "build:mcp": "cd mcp-server && npm ci && npm run build",
+    "build:widget": "cd frontend && npm ci --include=dev && npm run build",
+    "build:frontend": "cd frontend && npm ci --include=dev && npm run build",
+    "build:mcp": "cd mcp-server && npm ci --include=dev && npm run build",
     "copy:widget": "node scripts/copy-widget.js",
     "verify:widget": "node scripts/verify-widget-build.js",
-    "build": "npm run build:widget && npm run verify:widget && npm run build:mcp && npm run copy:widget && npm --prefix backend run build",
+    "build": "npm run build:widget && npm run verify:widget && npm run build:mcp && npm run copy:widget && npm run build:backend",
     "start:mcp": "cd mcp-server && npm start",
     "test": "node --import ./mcp-server/node_modules/tsx/dist/loader.mjs --test tests/*.test.ts",
     "lint": "npm --prefix frontend run lint",
     "typecheck": "npm --prefix backend run typecheck && npm --prefix mcp-server run typecheck && npm --prefix frontend run typecheck",
-    "test:built-mcp": "node scripts/smoke-mcp.mjs"
+    "test:built-mcp": "node scripts/smoke-mcp.mjs",
+    "build:backend": "npm --prefix backend ci --include=dev && npm --prefix backend run build"
   },
   "engines": {
     "node": ">=22.12.0 <25"

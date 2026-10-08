@@ -7,14 +7,17 @@ jobs:
   check:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      matrix:
+        node: [22, 24]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.1.0
         with:
-          node-version: 22
-      - run: npm --prefix backend ci && npm --prefix frontend ci && npm --prefix mcp-server ci
+          node-version: ${{ matrix.node }}
+          package-manager-cache: false
+      - run: npm ci && npm run build
       - run: npm test
       - run: npm run lint
       - run: npm run typecheck
-      - run: npm run build
       - run: npm run test:built-mcp
