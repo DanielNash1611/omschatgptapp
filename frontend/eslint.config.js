@@ -13,6 +13,12 @@ export default tseslint.config(
       "react-refresh": reactRefresh
     },
     rules: {
+      // Preserve the ESLint 9 policy while upgrading the supported runtime.
+      // These three checks were newly added to recommended in ESLint 10.
+      "no-unassigned-vars": "off",
+      "no-useless-assignment": "off",
+      "preserve-caught-error": "off",
+      "no-shadow-restricted-names": ["error", { reportGlobalThis: false }],
       "react-hooks/rules-of-hooks": "error",
       "react-hooks/exhaustive-deps": "warn",
       "react-refresh/only-export-components": "warn"
