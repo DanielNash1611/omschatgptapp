@@ -62,13 +62,14 @@ test('nodemon preserves matching and restarts its TypeScript development process
   await writeFile(path.join(directory, 'tsconfig.json'), JSON.stringify({ compilerOptions: { module: 'CommonJS' } }))
   const entry = path.join(directory, 'src/index.ts')
   const backendBin = path.resolve(path.dirname(backend.resolve('ts-node/package.json')), '..', '.bin')
-  await writeFile(entry, 'console.log("WATCH_FIRST"); setInterval(() => {}, 1000);\n')
+  await writeFile(entry, 'console.log("WATCH_FIRST");\n')
   const child = spawn(process.execPath, [backend.resolve('nodemon/bin/nodemon.js'),
     '--config', nodemonConfig, '--watch', 'src', '--exec', 'ts-node', 'src/index.ts'], {
     // nodemon reads ~/nodemon.json, including shell event hooks. The fixture
     // must never load a developer's global configuration or credentials.
     cwd: directory, env: { PATH: `${backendBin}${path.delimiter}${process.env.PATH}`, HOME: directory, HOMEPATH: directory, NO_UPDATE_NOTIFIER: '1' },
     stdio: ['ignore', 'pipe', 'pipe'],
+    detached: process.platform !== 'win32',
   })
   let output = ''
   const waitFor = (marker: string) => new Promise<void>((resolve, reject) => {
@@ -81,11 +82,25 @@ test('nodemon preserves matching and restarts its TypeScript development process
   try {
     await waitFor('WATCH_FIRST')
     const restarted = waitFor('WATCH_SECOND')
-    await writeFile(entry, 'console.log("WATCH_SECOND"); setInterval(() => {}, 1000);\n')
+    await writeFile(entry, 'console.log("WATCH_SECOND");\n')
     await restarted
   } finally {
-    child.kill('SIGTERM')
-    await new Promise<void>(resolve => { if (child.exitCode !== null) resolve(); else child.once('exit', () => resolve()) })
+    // Nodemon invokes a shell and ts-node beneath it. Terminate only this
+    // fixture's process group so descendants cannot retain CI's output pipes.
+    const stop = (signal: NodeJS.Signals) => {
+      try {
+        if (process.platform !== 'win32' && child.pid) process.kill(-child.pid, signal)
+        else child.kill(signal)
+      } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error }
+    }
+    stop('SIGTERM')
+    await new Promise<void>(resolve => {
+      if (child.exitCode !== null || child.signalCode !== null) return resolve()
+      const timer = setTimeout(() => { stop('SIGKILL'); resolve() }, 2000)
+      child.once('exit', () => { clearTimeout(timer); resolve() })
+    })
+    child.stdout.destroy()
+    child.stderr.destroy()
     await rm(directory, { recursive: true, force: true })
   }
 })
