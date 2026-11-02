@@ -1,3 +1,4 @@
+import { InputLimitError, readLimitedJson } from "./inputLimits.js";
 /**
  * Minimal MCP-like JSON-RPC server (no @modelcontextprotocol/sdk available here).
  * Exposes OMS tools over POST /mcp with a simple JSON-RPC 2.0 contract.
@@ -37,11 +38,11 @@ const PATH = "/mcp";
 const HOST = "0.0.0.0";
 
 const getOrderStatusSchema = z.object({
-  orderId: z.string().min(1)
+  orderId: z.string().min(1).max(128)
 });
 
 const cancelOrderSchema = z.object({
-  orderId: z.string().min(1)
+  orderId: z.string().min(1).max(128)
 });
 
 const sendJson = (res: http.ServerResponse, status: number, body: unknown) => {
@@ -122,18 +123,12 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  let body = "";
-  req.on("data", chunk => {
-    body += chunk;
-  });
-
-  req.on("end", async () => {
-    let parsed: JsonRpcRequest;
-    try {
-      parsed = JSON.parse(body);
-    } catch {
-      return sendJson(res, 400, makeError(null, -32700, "Parse error"));
-    }
+  let parsed: JsonRpcRequest;
+  try { parsed = await readLimitedJson(req) as JsonRpcRequest; }
+  catch (error) {
+    return sendJson(res, error instanceof InputLimitError ? error.status : 400, makeError(null, -32600, error instanceof Error ? error.message : "Invalid request"));
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return sendJson(res, 400, makeError(null, -32600, "Invalid Request"));
 
     const { id = null, method, params } = parsed;
 
@@ -157,7 +152,6 @@ const server = http.createServer(async (req, res) => {
       }
       return sendJson(res, 500, makeError(id, -32603, "Internal error", String(error)));
     }
-  });
 });
 
 server.listen(PORT, HOST, () => {
