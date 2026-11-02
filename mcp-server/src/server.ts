@@ -1,3 +1,4 @@
+import { INPUT_LIMITS, InputLimitError, readLimitedJson } from "./inputLimits.js";
 import { createServer as createHttpServer } from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { randomUUID } from "node:crypto";
@@ -119,29 +120,29 @@ const TOOL_DEBUG_INFO = [
 const orderIdParam = {
   orderId: z
     .string()
-    .min(1, "orderId is required")
+    .min(1, "orderId is required").max(128)
     .describe("The OMS order ID to look up or cancel."),
 };
 
 const cancelOrderParams = {
   orderId: z
     .string()
-    .min(1, "orderId is required")
+    .min(1, "orderId is required").max(128)
     .describe("The OMS order ID to cancel."),
   confirmationId: z
-    .string()
+    .string().max(256)
     .optional()
     .describe("Echoed confirmation ID required to finalize cancellation."),
   typedPhrase: z
-    .string()
+    .string().max(256)
     .optional()
     .describe("User-entered phrase matching `CANCEL <orderId>` required to finalize cancellation."),
 };
 const orderIdSchema = z.object(orderIdParam);
 const cancelOrderSchema = z.object(cancelOrderParams);
 const confirmCancelSchema = z.object({
-  orderId: z.string().min(1, "orderId is required"),
-  typedPhrase: z.string().min(1, "typedPhrase is required"),
+  orderId: z.string().min(1, "orderId is required").max(128),
+  typedPhrase: z.string().min(1, "typedPhrase is required").max(256),
 });
 const resetMockSchema = z.object({
   scenario: z.enum(["default"]).optional(),
@@ -250,7 +251,7 @@ const createServer = () => {
   const server = new McpServer({
     name: "oms-mcp-server",
     version: "0.1.0",
-  });
+  }, { maxToolInputElements: INPUT_LIMITS.elements });
 
   registerWidgetResource(server);
   logInfo("widget resource registered:", UI_RESOURCE_URI, WIDGET_MIME_TYPE);
@@ -914,12 +915,14 @@ const sendJson = (res: ServerResponse, status: number, body: unknown): void => {
 
 const handleInitializeRequest = async (
   req: IncomingMessage,
-  res: ServerResponse
+  res: ServerResponse,
+  parsedBody: unknown
 ): Promise<void> => {
   const server = createServer();
   let sessionIdForTransport: string | undefined;
   const transport = new StreamableHTTPServerTransport({
     sessionIdGenerator: () => randomUUID(),
+    maxRequestBodySize: INPUT_LIMITS.bytes,
     onsessioninitialized: sessionId => {
       sessionIdForTransport = sessionId;
       sessions[sessionId] = { transport, server };
@@ -933,24 +936,26 @@ const handleInitializeRequest = async (
   };
 
   await server.connect(transport);
-  await transport.handleRequest(req, res);
+  await transport.handleRequest(req, res, parsedBody);
 };
 
 const handleExistingSession = async (
   req: IncomingMessage,
   res: ServerResponse,
-  sessionId: string
+  sessionId: string,
+  parsedBody: unknown
 ): Promise<void> => {
   const session = sessions[sessionId];
   if (!session) {
     sendJson(res, 400, { error: "No valid session ID provided" });
     return;
   }
-  await session.transport.handleRequest(req, res);
+  await session.transport.handleRequest(req, res, parsedBody);
 };
 
 const handleMcpRequest = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
   normalizeAcceptHeader(req);
+  const parsedBody = req.method === "POST" ? await readLimitedJson(req) : undefined;
 
   const sessionId = getSessionId(req);
 
@@ -960,11 +965,11 @@ const handleMcpRequest = async (req: IncomingMessage, res: ServerResponse): Prom
   }
 
   if (!sessionId) {
-    await handleInitializeRequest(req, res);
+    await handleInitializeRequest(req, res, parsedBody);
     return;
   }
 
-  await handleExistingSession(req, res, sessionId);
+  await handleExistingSession(req, res, sessionId, parsedBody);
 };
 
 const server = createHttpServer(async (req, res) => {
@@ -989,6 +994,10 @@ const server = createHttpServer(async (req, res) => {
   try {
     await handleMcpRequest(req, res);
   } catch (error) {
+    if (error instanceof InputLimitError) {
+      sendJson(res, error.status, { error: error.message });
+      return;
+    }
     logError("MCP server connection error:", formatError(error));
     if (!res.headersSent) {
       sendJson(res, 500, { error: "Internal server error" });

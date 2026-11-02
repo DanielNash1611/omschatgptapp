@@ -46,3 +46,9 @@ Small, two-tier TypeScript prototype that wires a ChatGPT-style UI to mock OMS t
 - Implement real order lookup/cancel logic in `shared/oms.ts`
 - Keep payloads aligned with the shared shapes in `shared/types.ts`
 - System prompt + tool definitions live in `backend/src/prompts.ts`
+
+## Request limits
+
+8 KiB bodies, 64 keys/array elements, 1024 characters per string/key, depth 8. Order IDs are capped at 128 characters; confirmation fields at 256. These tools accept a few scalar fields.
+
+Limits apply to the entire decoded JSON request before SDK/schema validation or tool work, including unknown fields. Actual streamed bytes are counted, even without Content-Length. Compressed requests are rejected (415); malformed JSON returns 400; exceeded budgets return 413. Where present, MCP servers also enable the SDK tool-element cap. Limits apply to the supported HTTP server and legacy HTTP entrypoints. Outbound responses are not truncated by these input controls.
